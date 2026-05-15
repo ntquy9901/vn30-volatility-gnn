@@ -13,8 +13,27 @@ Usage:
 """
 import torch
 import torch.nn as nn
-from torch_geometric.nn import SAGEConv
-from torch_geometric.data import Data
+
+
+class SAGEConv(nn.Module):
+    """Minimal GraphSAGE convolution — no torch_geometric dependency.
+
+    h_i = Linear(concat(x_i, mean(x_j for j in N(i))))
+    """
+    def __init__(self, in_channels: int, out_channels: int):
+        super().__init__()
+        self.lin = nn.Linear(in_channels * 2, out_channels)
+
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+        src, dst = edge_index          # each shape (E,)
+        N = x.size(0)
+        agg = torch.zeros_like(x)
+        cnt = torch.zeros(N, 1, device=x.device, dtype=x.dtype)
+        agg.index_add_(0, dst, x[src])
+        cnt.index_add_(0, dst, torch.ones(src.size(0), 1, device=x.device, dtype=x.dtype))
+        cnt.clamp_(min=1.0)
+        agg = agg / cnt
+        return self.lin(torch.cat([x, agg], dim=-1))
 
 
 class VolatilityGNN(nn.Module):

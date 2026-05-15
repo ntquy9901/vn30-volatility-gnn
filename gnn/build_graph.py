@@ -17,7 +17,16 @@ Usage:
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.data import Data
+from dataclasses import dataclass
+
+
+@dataclass
+class GraphData:
+    """Lightweight replacement for torch_geometric.data.Data."""
+    edge_index: torch.Tensor   # (2, E) long
+    edge_attr:  torch.Tensor   # (E, 2) float
+    num_nodes:  int
+    loss_mask:  torch.Tensor   # (N,) bool
 
 
 # ── VN30 sector map (hardcoded domain knowledge) ────────────────────────────
@@ -67,7 +76,7 @@ def build_graph(
     end_date: str | pd.Timestamp,
     corr_window: int = 60,
     corr_threshold: float = 0.4,
-) -> Data:
+) -> GraphData:
     """
     Build a PyG Data object for the 31-node VN30+VNINDEX graph.
 
@@ -79,7 +88,7 @@ def build_graph(
         corr_threshold : Edge exists if corr > threshold OR same sector.
 
     Returns:
-        torch_geometric.data.Data with:
+        GraphData with:
             num_nodes  = 31
             edge_index : (2, E) long tensor
             edge_attr  : (E, 2) float tensor [pearson_corr, same_sector_flag]
@@ -151,7 +160,7 @@ def build_graph(
     loss_mask = torch.ones(31, dtype=torch.bool)
     loss_mask[0] = False
 
-    data = Data(
+    data = GraphData(
         edge_index=edge_index,
         edge_attr=edge_attr,
         num_nodes=31,
