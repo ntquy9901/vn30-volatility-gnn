@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+
+# Results & checkpoints (large files)
+results/
+*.pt
+*.pth
+*.ckpt
+
+# Logs
+*.log
+train.log
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Environment
+.env
+venv/
+.venv/
+
+# HuggingFace cache
+hf_cache/
+.cache/
+
+# pip
+pip_cache/
+pip_tmp/
+*.whl
+
+# BMAD tooling (not thesis code)
+.agents/
+.claude/
+_bmad/
+_bmad-output/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config overrides
+config_colab.yaml

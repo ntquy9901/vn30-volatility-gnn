@@ -1,0 +1,35 @@
+data:
+  prices_dir: data/raw/prices
+  train_end: "2025-12-31"
+  test_start: "2026-01-01"
+  # Common start date — ensures all 31 stocks have data
+  data_start: "2014-06-27"
+
+model:
+  context_length: 200       # Moirai2 input window (trading days)
+  stride: 20                # Walk-forward step (≈ 1 month)
+  horizon: 20               # RV forecast horizon h (trading days)
+  corr_window: 60           # Rolling window for Pearson correlation (days)
+  corr_threshold: 0.4       # Edge exists if corr > threshold OR same_sector
+  gnn_hidden: [64, 32]      # SAGEConv layer sizes
+  mlp_hidden: [16]          # MLP head hidden layer
+  dropout: 0.3
+
+training:
+  epochs: 50
+  lr: 0.001
+  weight_decay: 1.0e-4
+  batch_size: 1             # One graph snapshot per training step
+  early_stopping: 10        # Patience in epochs
+  grad_clip: 1.0            # Max gradient norm (prevents NaN loss)
+  seed: 42
+
+evaluation:
+  bootstrap_n: 1000         # Resamples for confidence intervals
+  dm_loss: "qlike"          # Loss function for Diebold-Mariano test
+
+# Ablation flags — set to true to disable components
+ablation:
+  no_graph: false           # Replace GraphSAGE with flat MLP
+  no_vnindex: false         # Remove VNINDEX hub node
+  handcrafted_features: false  # Replace Moirai2 embeddings with stats
