@@ -14,13 +14,14 @@ model:
   gnn_hidden: [64, 32]      # SAGEConv layer sizes
   mlp_hidden: [16]          # MLP head hidden layer
   dropout: 0.3
+  use_log_rv: true          # Train on log(RV+eps), exponentiate at inference
 
 training:
   epochs: 50
   lr: 0.001
   weight_decay: 1.0e-4
   batch_size: 1             # One graph snapshot per training step
-  early_stopping: 10        # Patience in epochs
+  early_stopping: 60        # Patience in epochs
   grad_clip: 1.0            # Max gradient norm (prevents NaN loss)
   seed: 42
 

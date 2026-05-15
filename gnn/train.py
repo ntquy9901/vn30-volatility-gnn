@@ -171,6 +171,7 @@ def train_walkforward(config: dict, results_dir: str = "results") -> pd.DataFram
     horizon      = config["model"]["horizon"]
     corr_window  = config["model"]["corr_window"]
     corr_thresh  = config["model"]["corr_threshold"]
+    use_log_rv   = config["model"].get("use_log_rv", False)
 
     logger.info("Loading prices...")
     close = load_close_prices(prices_dir, tickers=VN30_TICKERS + ["VNINDEX"])
@@ -239,6 +240,8 @@ def train_walkforward(config: dict, results_dir: str = "results") -> pd.DataFram
             val = rv_at_date.get(ticker, np.nan)
             labels[i + 1] = float(val) if not pd.isna(val) else 0.0
         labels_tensor = torch.tensor(labels, dtype=torch.float)
+        if use_log_rv:
+            labels_tensor = torch.log(labels_tensor.clamp(min=1e-8))
 
         # Train for `epochs` iterations on this window
         for epoch in range(epochs):
