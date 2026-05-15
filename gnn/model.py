@@ -13,32 +13,12 @@ Usage:
 """
 import torch
 import torch.nn as nn
-
-
-class SAGEConv(nn.Module):
-    """Minimal GraphSAGE convolution — no torch_geometric dependency.
-
-    h_i = Linear(concat(x_i, mean(x_j for j in N(i))))
-    """
-    def __init__(self, in_channels: int, out_channels: int):
-        super().__init__()
-        self.lin = nn.Linear(in_channels * 2, out_channels)
-
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        src, dst = edge_index          # each shape (E,)
-        N = x.size(0)
-        agg = torch.zeros_like(x)
-        cnt = torch.zeros(N, 1, device=x.device, dtype=x.dtype)
-        agg.index_add_(0, dst, x[src])
-        cnt.index_add_(0, dst, torch.ones(src.size(0), 1, device=x.device, dtype=x.dtype))
-        cnt.clamp_(min=1.0)
-        agg = agg / cnt
-        return self.lin(torch.cat([x, agg], dim=-1))
+import dgl.nn as dglnn
 
 
 class VolatilityGNN(nn.Module):
     """
-    GraphSAGE encoder + MLP regression head.
+    GraphSAGE encoder + MLP regression head (DGL backend).
 
     Args:
         in_dim    : Node feature dimension (384 for Moirai2-small).
@@ -62,10 +42,11 @@ class VolatilityGNN(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
 
-        # GraphSAGE layers
+        # GraphSAGE layers (DGL)
         dims = [in_dim] + hidden
         self.convs = nn.ModuleList(
-            [SAGEConv(dims[i], dims[i + 1]) for i in range(len(hidden))]
+            [dglnn.SAGEConv(dims[i], dims[i + 1], aggregator_type='mean')
+             for i in range(len(hidden))]
         )
 
         # MLP head
@@ -77,17 +58,17 @@ class VolatilityGNN(nn.Module):
                 layers.append(nn.ReLU())
         self.head = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
+    def forward(self, g, x: torch.Tensor) -> torch.Tensor:
         """
         Args:
-            x          : Node features (num_nodes, in_dim)
-            edge_index : (2, E) edge connectivity
+            g : DGL graph (dgl.DGLGraph)
+            x : Node features (num_nodes, in_dim)
 
         Returns:
             Predicted RV per node, shape (num_nodes, 1).
         """
         for conv in self.convs:
-            x = conv(x, edge_index)
+            x = conv(g, x)
             x = torch.relu(x)
             x = self.dropout(x)
 
@@ -114,6 +95,7 @@ class VolatilityGNN(nn.Module):
 
 # ── Quick verification ───────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import dgl
     import sys
     sys.path.insert(0, ".")
 
@@ -123,14 +105,14 @@ if __name__ == "__main__":
         print(f"  {name:40s}  {tuple(p.shape)}")
 
     # Dummy forward pass with 31 nodes
-    x          = torch.randn(31, 384)
-    edge_index = torch.tensor([[0, 1, 2], [1, 2, 0]], dtype=torch.long)
-    loss_mask  = torch.ones(31, dtype=torch.bool)
+    g = dgl.graph(([0, 1, 2], [1, 2, 0]), num_nodes=31)
+    x = torch.randn(31, 384)
+    loss_mask = torch.ones(31, dtype=torch.bool)
     loss_mask[0] = False
 
     model.eval()
     with torch.no_grad():
-        out = model(x, edge_index)
+        out = model(g, x)
     print(f"\nForward pass OK: output shape = {out.shape}")
 
     # Loss check

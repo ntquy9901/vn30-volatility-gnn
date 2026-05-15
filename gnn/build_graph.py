@@ -17,16 +17,16 @@ Usage:
 import numpy as np
 import pandas as pd
 import torch
+import dgl
 from dataclasses import dataclass
 
 
 @dataclass
 class GraphData:
-    """Lightweight replacement for torch_geometric.data.Data."""
-    edge_index: torch.Tensor   # (2, E) long
-    edge_attr:  torch.Tensor   # (E, 2) float
-    num_nodes:  int
-    loss_mask:  torch.Tensor   # (N,) bool
+    """Graph snapshot — DGL backend."""
+    g:         object          # dgl.DGLGraph with edata['attr'] (E, 2)
+    num_nodes: int
+    loss_mask: torch.Tensor    # (N,) bool
 
 
 # ── VN30 sector map (hardcoded domain knowledge) ────────────────────────────
@@ -78,7 +78,7 @@ def build_graph(
     corr_threshold: float = 0.4,
 ) -> GraphData:
     """
-    Build a PyG Data object for the 31-node VN30+VNINDEX graph.
+    Build a DGL graph for the 31-node VN30+VNINDEX graph.
 
     Args:
         log_returns : DataFrame with columns = ALL_NODES (VNINDEX first),
@@ -90,8 +90,7 @@ def build_graph(
     Returns:
         GraphData with:
             num_nodes  = 31
-            edge_index : (2, E) long tensor
-            edge_attr  : (E, 2) float tensor [pearson_corr, same_sector_flag]
+            g          : dgl.DGLGraph with edata['attr'] (E, 2) float
             loss_mask  : (31,) bool tensor — False for VNINDEX (node_0)
     """
     end_date = pd.Timestamp(end_date)
@@ -153,20 +152,14 @@ def build_graph(
             stacklevel=2,
         )
 
-    edge_index = torch.tensor([src_list, dst_list], dtype=torch.long)
-    edge_attr  = torch.tensor(attr_list, dtype=torch.float)
+    dgl_g = dgl.graph((src_list, dst_list), num_nodes=31)
+    dgl_g.edata['attr'] = torch.tensor(attr_list, dtype=torch.float)
 
     # loss_mask: False for VNINDEX (node_0), True for all VN30 stocks
     loss_mask = torch.ones(31, dtype=torch.bool)
     loss_mask[0] = False
 
-    data = GraphData(
-        edge_index=edge_index,
-        edge_attr=edge_attr,
-        num_nodes=31,
-        loss_mask=loss_mask,
-    )
-    return data
+    return GraphData(g=dgl_g, num_nodes=31, loss_mask=loss_mask)
 
 
 # ── Quick verification ───────────────────────────────────────────────────────
@@ -183,34 +176,31 @@ if __name__ == "__main__":
     log_ret = compute_log_returns(close)
 
     print(f"Building graph at {END_DATE}...")
-    g = build_graph(log_ret, end_date=END_DATE)
+    gd = build_graph(log_ret, end_date=END_DATE)
 
-    n_edges = g.edge_index.shape[1]
-    n_stock_edges = sum(1 for i in range(n_edges)
-                        if g.edge_index[0, i] != 0 and g.edge_index[1, i] != 0
-                        and g.edge_index[0, i] != g.edge_index[1, i])
-    n_hub_edges   = sum(1 for i in range(n_edges) if g.edge_index[0, i] == 0)
+    src, dst = gd.g.edges()
+    n_edges       = gd.g.num_edges()
+    n_hub_edges   = int((src == 0).sum())
+    n_stock_edges = int(((src != 0) & (dst != 0) & (src != dst)).sum())
 
     print(f"\nGraph stats at {END_DATE}:")
-    print(f"  Nodes      : {g.num_nodes}")
+    print(f"  Nodes      : {gd.num_nodes}")
     print(f"  Total edges: {n_edges}")
     print(f"  Hub edges  : {n_hub_edges}  (VNINDEX -> stocks)")
     print(f"  Stock edges: {n_stock_edges}")
-    print(f"  edge_attr shape: {g.edge_attr.shape}")
-    print(f"  loss_mask  : {g.loss_mask.sum()}/31 stocks in loss")
+    print(f"  edge_attr shape: {gd.g.edata['attr'].shape}")
+    print(f"  loss_mask  : {gd.loss_mask.sum()}/31 stocks in loss")
 
     # Degree stats (stock nodes only)
-    degrees = torch.zeros(31, dtype=torch.long)
-    for dst in g.edge_index[1]:
-        degrees[dst] += 1
-    stock_degrees = degrees[1:]  # exclude VNINDEX
+    _, in_deg = gd.g.in_degrees(torch.arange(31))
+    stock_degrees = in_deg[1:]
     print(f"\nStock node degree stats (in-degree):")
     print(f"  Min: {stock_degrees.min().item()}")
     print(f"  Mean: {stock_degrees.float().mean().item():.2f}")
     print(f"  Max: {stock_degrees.max().item()}")
     if (stock_degrees == 0).any():
-        isolated = [VN30_TICKERS[i] for i in (stock_degrees == 0).nonzero(as_tuple=True)[0]]
-        print(f"  WARNING isolated (degree=0): {isolated}")
+        iso = [VN30_TICKERS[i] for i in (stock_degrees == 0).nonzero(as_tuple=True)[0]]
+        print(f"  WARNING isolated (degree=0): {iso}")
     else:
         print(f"  No isolated nodes")
 

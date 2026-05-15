@@ -134,12 +134,12 @@ def train_one_epoch(
 ) -> float:
     model.train()
     node_features = node_features.to(device)
-    edge_index    = graph_data.edge_index.to(device)
+    g             = graph_data.g.to(device)
     loss_mask     = graph_data.loss_mask.to(device)
     rv_labels     = rv_labels.to(device)
 
     optimizer.zero_grad()
-    pred = model(node_features, edge_index)
+    pred = model(g, node_features)
     loss = model.masked_loss(pred, rv_labels.unsqueeze(-1), loss_mask)
     loss.backward()
     torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
