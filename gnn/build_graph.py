@@ -192,7 +192,7 @@ if __name__ == "__main__":
     print(f"  loss_mask  : {gd.loss_mask.sum()}/31 stocks in loss")
 
     # Degree stats (stock nodes only)
-    _, in_deg = gd.g.in_degrees(torch.arange(31))
+    in_deg = gd.g.in_degrees(torch.arange(31))
     stock_degrees = in_deg[1:]
     print(f"\nStock node degree stats (in-degree):")
     print(f"  Min: {stock_degrees.min().item()}")
