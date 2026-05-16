@@ -64,6 +64,49 @@ Root cause: HAR-OLS fits per stock on the full time series (~2,500 samples per s
 
 ---
 
+## Moirai2 Pretraining Data — Finance Coverage Analysis
+
+**Source:** GIFT-Eval Pretrain dataset (arxiv 2410.10393) + Chronos-Mixup + KernelSynth
+
+### Datasets labeled "Econ/Fin" trong pretraining corpus
+
+| Dataset | Freq | Series | Nội dung thực sự |
+|---|---|---|---|
+| M4 Daily | Daily | 4,227 | Business/macro competition — một số stock |
+| M4 Monthly | Monthly | 48,000 | Kinh tế vĩ mô, demographic, industry |
+| M4 Quarterly | Quarterly | 24,000 | GDP, macro indicators |
+| M4 Yearly | Annual | 22,974 | Macro, demographic |
+| M1/M3 variants | Mix | ~3,000 | Macro + business forecasting |
+| FRED-MD | Monthly | 107 | **Federal Reserve macro indicators** (US) |
+| Bitcoin | Daily | **18** | **Crypto price** — duy nhất daily price series |
+| NN5 Daily/Weekly | Daily/W | 111 | ATM cash withdrawal UK (KHÔNG phải stock) |
+| GoDaddy | Monthly | 3,135 | Domain registration business data |
+
+### Kết luận
+
+**Không có equity/stock market data thực sự trong pretraining:**
+- Chỉ 18 series Bitcoin daily price — crypto, không phải equity
+- M4/M3/M1 là competition data tổng hợp, chủ yếu macro kinh tế và business
+- FRED-MD = 107 chỉ số macro Mỹ (CPI, lãi suất, employment)
+- NN5 = cash withdrawal, bị label nhầm "Econ/Fin"
+- **Không có Asian market data** — toàn bộ corpus là US/EU-centric
+- **Không có realized volatility series** — Moirai2 chưa bao giờ thấy RV trong pretraining
+
+**Hàm ý trực tiếp cho kết quả thực nghiệm:**
+
+Đây là giải thích căn bản tại sao median|corr(Moirai2 embedding, RV)| = 0.128:
+
+> Moirai 2.0 được pretrain trên macro/business competition data và synthetic series.
+> Pretraining corpus không chứa daily stock return series của Asian equity markets,
+> không có realized volatility labels, và không có dữ liệu thị trường Việt Nam.
+> Do đó, các embedding dimensions phản ánh patterns của macro time series
+> (trend, seasonality, mean-reversion) — không phải second-moment structure
+> của individual stock volatility. Domain gap này là nguyên nhân cấu trúc
+> giải thích tại sao Moirai2 embeddings thêm nhiễu thay vì signal khi kết hợp
+> với direct RV features.
+
+---
+
 ## Extended RV Features (6-dim)
 
 | Feature | Formula | Source |
@@ -79,15 +122,17 @@ Root cause: HAR-OLS fits per stock on the full time series (~2,500 samples per s
 
 ## Thesis Narrative
 
-> "We evaluated whether Salesforce Moirai2 — a state-of-the-art universal time-series foundation model — can replace hand-crafted volatility features for realized volatility (RV) forecasting on the VN30 index (Vietnam). Results on a 2026 out-of-sample test set reveal three key insights:
+> "We evaluated whether Salesforce Moirai2 — a state-of-the-art universal time-series foundation model — can replace hand-crafted volatility features for realized volatility (RV) forecasting on the VN30 index (Vietnam). Results on a 2026 out-of-sample test set reveal four key insights:
 >
-> (1) **Moirai2 embeddings alone are insufficient** for volatility prediction because the model's decoder-only architecture is pre-trained for return-level forecasting, not second-moment structure (median |corr with RV| = 0.128 across 384 embedding dimensions).
+> (1) **Moirai2 embeddings alone are insufficient** for volatility prediction. The model's decoder-only architecture is pre-trained on macro/business competition data (M1/M3/M4 competitions, FRED-MD macro indicators) and contains virtually no equity market data — only 18 Bitcoin series among ~4.5M time series in the pretraining corpus. No Asian market data and no realized volatility series are present. This domain gap directly explains the weak embedding–RV correlation (median |corr| = 0.128 across 384 dimensions): the embeddings encode macro trend/seasonality patterns, not second-moment structure of individual stock volatility.
 >
 > (2) **The walk-forward training regime**, designed for streaming deployment, severely limits neural models by providing only 30 labeled samples per gradient update, explaining 35–48% of the performance gap vs batch training.
 >
 > (3) **Classical HAR-RV (OLS) dominates** all neural configurations, achieving R²=0.97 vs the best neural model's R²=0.28. The gap is structural: HAR-OLS fits per-stock on 2,500+ samples with a 3-parameter linear model; the equivalent neural model has ~97 effective samples per stock.
 >
-> Best neural configuration: MLP with 6 extended RV features (batch training), MAE=0.0066, 6.5× worse than HAR-RV. Adding Moirai2 embeddings to this configuration worsens performance by 8–9%, confirming that the foundation model adds noise rather than signal when direct RV history is available."
+> (4) **Moirai2 embeddings add noise when combined with direct RV features** (+8–9% worse MAE), confirming that the 384-dimensional return-level representation is orthogonal to, not complementary with, the 6-dimensional RV feature space.
+>
+> Best neural configuration: MLP with 6 extended RV features (batch training), MAE=0.0066, 6.5× worse than HAR-RV. The performance ceiling for neural models on VN30 is determined by data volume (~97 effective samples/stock), not feature engineering or architecture choice."
 
 ---
 

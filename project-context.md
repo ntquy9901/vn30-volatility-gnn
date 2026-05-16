@@ -81,6 +81,32 @@ ByteDance Timer-S1, Datadog Toto-Open-Base-1.0, NX-AI TiRex, v.v.
 **Lưu ý quan trọng:** KHÔNG có Vietnamese stock data, KHÔNG có volatility series.
 Moirai 2.0 chưa bao giờ thấy VN30 hay RV prediction tasks trong pretraining.
 
+**Phân tích Finance coverage trong pretraining data (từ GIFT-Eval paper):**
+
+Datasets được label "Econ/Fin" — nội dung thực sự:
+
+| Dataset | Series | Nội dung thực |
+|---|---|---|
+| M4 Daily/Weekly/Monthly/Quarterly/Yearly | ~100K | Business/macro competition — mix nhiều loại |
+| M1/M3 variants | ~3K | Macro + business forecasting competitions |
+| FRED-MD | 107 | Federal Reserve macro indicators Mỹ (CPI, GDP...) |
+| **Bitcoin** | **18** | **Crypto daily price — DUY NHẤT daily financial price** |
+| NN5 Daily/Weekly | 111 | ATM cash withdrawal UK (label nhầm "Econ/Fin") |
+| GoDaddy | 3,135 | Domain registration business data |
+
+**Kết luận:**
+- Stock/equity price series: **~0** (không có individual equity data)
+- Asian market data: **0** — toàn bộ corpus US/EU-centric
+- Realized volatility series: **0** — Moirai2 chưa bao giờ thấy RV
+- Dữ liệu finance thực sự: chỉ 18 series Bitcoin + macro indicators
+- M4 "Econ/Fin" chủ yếu là macro kinh tế và competition data tổng hợp
+
+**Hàm ý cho kết quả:**
+median|corr(Moirai2 embedding, RV)| = 0.128 là hệ quả trực tiếp của domain gap này.
+Embeddings phản ánh macro/business patterns (trend, seasonality), không phải
+second-moment structure của equity volatility. Đây là lý do cấu trúc tại sao
+Moirai2 thêm nhiễu (+8-9% MAE worse) khi kết hợp với direct RV features.
+
 ---
 
 ### GIFT-Eval Benchmark Paper
