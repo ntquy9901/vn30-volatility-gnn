@@ -18,15 +18,16 @@ TEST_START = pd.Timestamp(cfg["data"]["test_start"])
 PRICES_DIR = cfg["data"]["prices_dir"]
 HORIZON    = cfg["model"]["horizon"]
 
-from src.volatility_labels import load_close_prices, compute_log_returns, compute_rv
+from src.volatility_labels import load_close_prices, compute_log_returns, compute_rv, get_rv_node_features
 from src.embed_extractor import Moirai2Embedder
 from gnn.model import VolatilityGNN
 from gnn.build_graph import build_graph, VN30_TICKERS
 from gnn.train import extract_embeddings
 from evaluation.metrics import compare_models
 
-device      = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-USE_LOG_RV  = cfg["model"].get("use_log_rv", False)
+device        = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+USE_LOG_RV    = cfg["model"].get("use_log_rv", False)
+USE_LAGGED_RV = cfg["model"].get("use_lagged_rv", False)
 
 # ── Load data ──────────────────────────────────────────────────────────────
 print("Loading prices and RV labels...")
@@ -42,7 +43,7 @@ print(f"Test dates: {len(test_dates)}  ({test_dates[0].date()} to {test_dates[-1
 # ── GNN inference ──────────────────────────────────────────────────────────
 print("\nLoading GNN checkpoint...")
 gnn_model = VolatilityGNN(
-    in_dim     = Moirai2Embedder.D_MODEL,
+    in_dim     = Moirai2Embedder.D_MODEL + (3 if USE_LAGGED_RV else 0),
     hidden     = cfg["model"]["gnn_hidden"],
     mlp_hidden = cfg["model"]["mlp_hidden"],
     dropout    = cfg["model"]["dropout"],
@@ -65,7 +66,13 @@ with torch.no_grad():
                             corr_window  = cfg["model"]["corr_window"],
                             corr_threshold = cfg["model"]["corr_threshold"])
         feats = extract_embeddings(embedder, log_ret, date,
-                                   cfg["model"]["context_length"]).to(device)
+                                   cfg["model"]["context_length"])
+        if USE_LAGGED_RV:
+            from gnn.build_graph import ALL_NODES
+            rv_feats = get_rv_node_features(log_ret, date, ALL_NODES,
+                                            cfg["model"]["horizon"])
+            feats = torch.cat([feats, rv_feats], dim=-1)
+        feats = feats.to(device)
         pred  = gnn_model(g.g.to(device), feats).cpu().numpy().ravel()
         for j, tk in enumerate(VN30_TICKERS):
             raw = float(pred[j + 1])

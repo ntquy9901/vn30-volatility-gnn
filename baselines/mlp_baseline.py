@@ -94,12 +94,13 @@ def train_mlp_walkforward(
     np.random.seed(config["training"]["seed"])
     torch.manual_seed(config["training"]["seed"])
 
-    prices_dir  = config["data"]["prices_dir"]
-    train_end   = pd.Timestamp(config["data"]["train_end"])
-    data_start  = pd.Timestamp(config["data"].get("data_start", "2014-06-27"))
-    context_len = config["model"]["context_length"]
-    stride      = config["model"]["stride"]
-    horizon     = config["model"]["horizon"]
+    prices_dir   = config["data"]["prices_dir"]
+    train_end    = pd.Timestamp(config["data"]["train_end"])
+    data_start   = pd.Timestamp(config["data"].get("data_start", "2014-06-27"))
+    context_len  = config["model"]["context_length"]
+    stride       = config["model"]["stride"]
+    horizon      = config["model"]["horizon"]
+    use_log_rv   = config["model"].get("use_log_rv", False)
 
     close   = load_close_prices(prices_dir, tickers=VN30_TICKERS + ["VNINDEX"])
     close   = close[close.index >= data_start]
@@ -147,7 +148,10 @@ def train_mlp_walkforward(
         for i, ticker in enumerate(VN30_TICKERS):
             val = rv_at_date.get(ticker, np.nan)
             labels[i + 1] = float(val) if not pd.isna(val) else 0.0
-        labels_t  = torch.tensor(labels, dtype=torch.float).to(device)
+        labels_t  = torch.tensor(labels, dtype=torch.float)
+        if use_log_rv:
+            labels_t = torch.log(labels_t.clamp(min=1e-8))
+        labels_t  = labels_t.to(device)
         loss_mask = torch.ones(31, dtype=torch.bool)
         loss_mask[0] = False   # exclude VNINDEX (no label)
 
@@ -232,8 +236,12 @@ def run_mlp_inference(
     for date in test_dates:
         node_feats = extract_embeddings(embedder, log_ret, date, context_len).to(device)
         pred = model(node_feats).cpu().numpy().ravel()   # (31,)
+        use_log_rv = config["model"].get("use_log_rv", False)
         for i, ticker in enumerate(VN30_TICKERS):
-            preds_per_stock[ticker][date] = max(float(pred[i + 1]), 0.0)
+            raw = float(pred[i + 1])
+            preds_per_stock[ticker][date] = max(
+                float(np.exp(raw)) if use_log_rv else raw, 0.0
+            )
 
     return {t: pd.Series(preds_per_stock[t]) for t in VN30_TICKERS}
 

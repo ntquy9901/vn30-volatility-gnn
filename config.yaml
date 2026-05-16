@@ -15,6 +15,7 @@ model:
   mlp_hidden: [16]          # MLP head hidden layer
   dropout: 0.3
   use_log_rv: true          # Train on log(RV+eps), exponentiate at inference
+  use_lagged_rv: true       # Append [log(RV_d), log(RV_w), log(RV_m)] to node features (384→387)
 
 training:
   epochs: 50

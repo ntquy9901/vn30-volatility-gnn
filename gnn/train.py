@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", message="The mean prediction is not stored")
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.volatility_labels import (
-    load_close_prices, compute_log_returns, compute_rv
+    load_close_prices, compute_log_returns, compute_rv, get_rv_node_features
 )
 from src.embed_extractor import Moirai2Embedder
 from gnn.build_graph import build_graph, VN30_TICKERS, ALL_NODES, NODE_IDX
@@ -172,6 +172,7 @@ def train_walkforward(config: dict, results_dir: str = "results") -> pd.DataFram
     corr_window  = config["model"]["corr_window"]
     corr_thresh  = config["model"]["corr_threshold"]
     use_log_rv   = config["model"].get("use_log_rv", False)
+    use_lagged_rv = config["model"].get("use_lagged_rv", False)
 
     logger.info("Loading prices...")
     close = load_close_prices(prices_dir, tickers=VN30_TICKERS + ["VNINDEX"])
@@ -190,8 +191,9 @@ def train_walkforward(config: dict, results_dir: str = "results") -> pd.DataFram
     )
 
     # ── Model ────────────────────────────────────────────────────────────────
+    rv_extra_dim = 3 if use_lagged_rv else 0
     model = VolatilityGNN(
-        in_dim=Moirai2Embedder.D_MODEL,
+        in_dim=Moirai2Embedder.D_MODEL + rv_extra_dim,
         hidden=config["model"]["gnn_hidden"],
         mlp_hidden=config["model"]["mlp_hidden"],
         dropout=config["model"]["dropout"],
@@ -227,6 +229,9 @@ def train_walkforward(config: dict, results_dir: str = "results") -> pd.DataFram
 
         # Extract embeddings (frozen Moirai2 — no gradient)
         node_feats = extract_embeddings(embedder, log_ret, window_end, context_len)
+        if use_lagged_rv:
+            rv_feats   = get_rv_node_features(log_ret, window_end, ALL_NODES, horizon)
+            node_feats = torch.cat([node_feats, rv_feats], dim=-1)
 
         # RV label at window_end for each VN30 stock
         rv_at_date = rv_all.loc[window_end] if window_end in rv_all.index else None

@@ -8,6 +8,7 @@ Usage:
 """
 import numpy as np
 import pandas as pd
+import torch
 from pathlib import Path
 
 
@@ -68,6 +69,54 @@ def compute_rv(close: pd.DataFrame, h: int = 20) -> pd.DataFrame:
     log_ret = compute_log_returns(close)
     rv = log_ret.rolling(h, min_periods=h).std(ddof=1).shift(-h)
     return rv
+
+
+def compute_past_rv(log_returns: pd.DataFrame, h: int = 20) -> pd.DataFrame:
+    """
+    Past RV at date t = std(log-returns[t-h+1 .. t], ddof=1).
+    Fully available at time t — no lookahead.
+    """
+    return log_returns.rolling(h, min_periods=h).std(ddof=1)
+
+
+def get_rv_node_features(
+    log_returns: pd.DataFrame,
+    window_end: pd.Timestamp,
+    all_nodes: list,
+    h: int = 20,
+) -> torch.Tensor:
+    """
+    Lagged RV node features [log(RV_d), log(RV_w), log(RV_m)] for each node.
+
+    RV_d = past-h RV at window_end          (daily)
+    RV_w = mean of past 5  RV values        (weekly)
+    RV_m = mean of past 22 RV values        (monthly)
+
+    Log-transformed so scale matches log-RV training target.
+
+    Returns:
+        Tensor shape (len(all_nodes), 3), float32.
+    """
+    rv_past = compute_past_rv(log_returns, h)
+    n = len(all_nodes)
+    feat = np.zeros((n, 3), dtype=np.float32)
+
+    for idx, ticker in enumerate(all_nodes):
+        if ticker not in rv_past.columns:
+            continue
+        series = rv_past[ticker]
+        avail  = series[series.index <= window_end].dropna()
+        if len(avail) == 0:
+            continue
+        rv_d = float(avail.iloc[-1])
+        rv_w = float(avail.iloc[-5:].mean())  if len(avail) >= 5  else rv_d
+        rv_m = float(avail.iloc[-22:].mean()) if len(avail) >= 22 else rv_d
+
+        feat[idx, 0] = np.log(max(rv_d, 1e-8))
+        feat[idx, 1] = np.log(max(rv_w, 1e-8))
+        feat[idx, 2] = np.log(max(rv_m, 1e-8))
+
+    return torch.tensor(feat, dtype=torch.float)
 
 
 # ── Quick verification ───────────────────────────────────────────────────────
