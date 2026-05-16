@@ -55,6 +55,7 @@ embedder = Moirai2Embedder(
     size           = "small",
     context_length = cfg["model"]["context_length"],
     patch_size     = cfg["model"].get("patch_size", 32),
+    pooling        = cfg["model"].get("pooling", "last_context"),
 )
 
 print(f"Running GNN inference on {len(test_dates)} test dates ({device})...")

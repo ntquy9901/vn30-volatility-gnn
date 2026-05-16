@@ -1,5 +1,21 @@
 """
-Extract encoder embeddings from Moirai2 via PyTorch forward hook.
+Extract embeddings from Moirai2 (decoder-only, causal attention) via forward hook.
+
+Architecture note (confirmed from HuggingFace model card + source):
+  Moirai2 is DECODER-ONLY with causal temporal attention (not BERT-style encoder).
+  For context_length=200, prediction_length=1 the transformer processes 14 patches:
+    patches 0-12 : context (each patch_size=16 days of log-returns)
+    patch 13     : MASK/prediction token (1 forecast step)
+
+  Causal attention: patch t attends to patches 0..t only.
+  The MASK token (patch -1) has attended to ALL 13 context patches
+  and is therefore the richest single-vector representation.
+
+Pooling strategies (controlled by `pooling` param):
+  'last'         : reprs[:, -1, :]          ← MASK token; sees all context  [DEFAULT]
+  'last_context' : reprs[:, -2, :]          ← last OBSERVED patch; sees all context
+  'mean'         : reprs.mean(dim=1)         ← old behaviour; diluted by early patches
+  'mean_context' : reprs[:, :-1, :].mean(1) ← mean of context patches only (excl. MASK)
 
 Usage:
     python src/embed_extractor.py
@@ -14,22 +30,34 @@ from gluonts.dataset.pandas import PandasDataset
 from gluonts.dataset.split import split
 from uni2ts.model.moirai2 import Moirai2Forecast, Moirai2Module
 
+# Valid pooling strategies
+_POOLING_OPTIONS = {"last", "last_context", "mean", "mean_context"}
+
 
 class Moirai2Embedder:
     """
-    Wraps Moirai2Forecast and extracts encoder hidden states via hook.
+    Wraps Moirai2Forecast and extracts hidden states via a forward hook on
+    Moirai2Module.encoder (the causal transformer stack).
 
-    The hook is registered on Moirai2Module.encoder (TransformerEncoder).
-    Output shape per forward call: (batch, n_patches, d_model=384).
-    After mean-pooling over patches: (batch, 384) — one vector per series.
+    Hook output: (batch, n_patches, d_model=384)
+    Returned embedding: (d_model,) per series after applying `pooling`.
     """
 
-    D_MODEL = 384  # Moirai2-small fixed dimension
+    D_MODEL = 384  # Moirai2-small d_model (from config.json)
 
-    def __init__(self, size: str = "small", context_length: int = 200,
-                 patch_size: int = 32, device: str | None = None):
+    def __init__(
+        self,
+        size: str = "small",
+        context_length: int = 200,
+        patch_size: int = 32,       # kept for API compatibility; actual patch size is set by the pretrained model (16)
+        device: str | None = None,
+        pooling: str = "last",      # see module docstring for options
+    ):
+        if pooling not in _POOLING_OPTIONS:
+            raise ValueError(f"pooling must be one of {_POOLING_OPTIONS}, got {pooling!r}")
         self.context_length = context_length
         self.patch_size = patch_size
+        self.pooling = pooling
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
         print(f"Loading Moirai2-{size} on {self.device}...")
@@ -104,8 +132,19 @@ class Moirai2Embedder:
         if reprs is None:
             raise RuntimeError("Hook did not capture any output.")
 
-        # Mean-pool over patch dimension → (batch, 384)
-        embeddings = reprs.mean(dim=1).numpy()  # (n_series, 384)
+        # Pool over patch dimension → (batch, 384)
+        if self.pooling == "last":
+            # MASK/prediction token — has attended to ALL context patches
+            embeddings = reprs[:, -1, :].numpy()
+        elif self.pooling == "last_context":
+            # Last observed context patch (index -2, before the MASK token)
+            embeddings = reprs[:, -2, :].numpy()
+        elif self.pooling == "mean_context":
+            # Mean of context patches only, excluding the MASK token
+            embeddings = reprs[:, :-1, :].mean(dim=1).numpy()
+        else:
+            # 'mean': original behaviour — average over all patches incl. MASK
+            embeddings = reprs.mean(dim=1).numpy()
 
         # The predictor may reorder or batch differently; align by index
         # (for 1 window per series, batch dim = n_series in order)

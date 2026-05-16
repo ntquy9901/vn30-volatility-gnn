@@ -188,6 +188,7 @@ def train_walkforward(config: dict, results_dir: str = "results") -> pd.DataFram
         size="small",
         context_length=context_len,
         patch_size=config["model"].get("patch_size", 32),
+        pooling=config["model"].get("pooling", "last_context"),
     )
 
     # ── Model ────────────────────────────────────────────────────────────────

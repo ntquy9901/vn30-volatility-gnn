@@ -56,6 +56,7 @@ embedder = Moirai2Embedder(
     size="small",
     context_length=CONTEXT_LEN,
     patch_size=cfg["model"].get("patch_size", 32),
+    pooling=cfg["model"].get("pooling", "last_context"),
 )
 
 all_embeds: list[np.ndarray] = []

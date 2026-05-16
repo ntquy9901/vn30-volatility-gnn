@@ -111,6 +111,7 @@ def train_mlp_walkforward(
         size="small",
         context_length=context_len,
         patch_size=config["model"].get("patch_size", 32),
+        pooling=config["model"].get("pooling", "last_context"),
     )
 
     model = VolatilityMLP(
@@ -217,6 +218,7 @@ def run_mlp_inference(
         size="small",
         context_length=context_len,
         patch_size=config["model"].get("patch_size", 32),
+        pooling=config["model"].get("pooling", "last_context"),
     )
 
     model = VolatilityMLP(
