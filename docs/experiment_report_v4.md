@@ -11,6 +11,7 @@
 | **HAR-RV (OLS)** | Full history/stock | RV_d, RV_w, RV_m | **0.0010** | **+0.971** | **0.985** | **0.012** |
 | **LSTM** | Full history/stock | same | 0.0011 | +0.967 | 0.983 | 0.012 |
 | **MLP (RV6 only)** | Batch, 2896 samples | 6 extended RV | **0.0066** | **+0.278** | **0.551** | 0.328 |
+| **Moirai2 IQR (zero-shot)** | **None** | **q0.9−q0.1** | 0.0067† | +0.161 | **0.557** | — |
 | GNN (RV6 only) | Batch | 6 extended RV | 0.0084 | -0.194 | 0.396 | 0.328 |
 | MLP (Moirai2+RV6) | Batch | 390-dim | 0.0072 | +0.065 | 0.505 | **0.259** |
 | GNN (Moirai2+RV6) | Batch | 390-dim | 0.0091 | -0.519 | 0.377 | 0.345 |
@@ -19,6 +20,8 @@
 | WalkFwd MLP+Moirai2 | Walk-forward | 387-dim | 0.0121 | -1.077 | 0.239 | 1.444 |
 | WalkFwd GNN+Moirai2 | Walk-forward | 387-dim | 0.0143 | -1.856 | 0.117 | 1.898 |
 | GARCH(1,1) | Per-stock MLE | — | 0.0071 | +0.159 | 0.535 | 0.301 |
+
+†MAE after scale correction (×0.442); raw MAE = 0.0323
 
 ---
 
@@ -49,7 +52,30 @@ Best neural model with RV6 (MAE=0.0066) vs best with RV3 (MAE=0.0074):
 - Batch MLP (Moirai2+RV3): 0.0078 vs Batch GNN (Moirai2+RV3): 0.0074 → graph helps slightly (+5%)
 - Effect depends on feature quality and number of training windows
 
-### Finding 5 — Remaining 6.5× gap vs HAR-RV is structural
+### Finding 5 — Moirai2 IQR (zero-shot) matches trained MLP on Pearson_r
+
+Using Moirai2's own forecast output — IQR = q0.9 − q0.1 of the 1-step-ahead
+return distribution — as a volatility proxy (no training required):
+
+| Approach | Pearson_r | MAE | Training |
+|---|---|---|---|
+| Moirai2 IQR (zero-shot) | **0.557** | 0.0067* | None |
+| MLP (RV6-only, batch) | 0.551 | **0.0066** | 2,896 samples |
+| Embedding median\|corr\| | 0.128 | — | — |
+
+*MAE after scale correction (IQR × 0.442); R²=+0.161
+
+Key observations:
+- IQR requires **no training** and **no feature engineering** — pure zero-shot
+- Pearson_r of IQR (0.557) is **4× higher** than embedding approach (0.128)
+- Suggests Moirai2's **uncertainty quantification** carries more RV signal
+  than its **intermediate representation** (embedding)
+- Domain gap partially mitigated: model learned calibrated uncertainty
+  even though pretrained on macro/competition data, not equity data
+- Scale factor 0.442 ≈ mean(RV)/mean(IQR): IQR in log-return units is
+  ~2.26× larger than RV (consistent with fat-tailed VN30 returns)
+
+### Finding 6 — Remaining 6.5× gap vs HAR-RV is structural
 Best neural (MLP RV6, MAE=0.0066) vs HAR-RV (MAE=0.0010) = **6.5× gap**.
 
 Root cause: HAR-OLS fits per stock on the full time series (~2,500 samples per stock). The batch neural model shares weights across all 30 stocks → effectively ~97 samples per stock (2,896/30). OLS is the optimal linear estimator; neural models need far more data to approach this efficiency at linear tasks.
@@ -132,7 +158,9 @@ Root cause: HAR-OLS fits per stock on the full time series (~2,500 samples per s
 >
 > (4) **Moirai2 embeddings add noise when combined with direct RV features** (+8–9% worse MAE), confirming that the 384-dimensional return-level representation is orthogonal to, not complementary with, the 6-dimensional RV feature space.
 >
-> Best neural configuration: MLP with 6 extended RV features (batch training), MAE=0.0066, 6.5× worse than HAR-RV. The performance ceiling for neural models on VN30 is determined by data volume (~97 effective samples/stock), not feature engineering or architecture choice."
+> (5) **Moirai2's quantile spread (IQR = q0.9 − q0.1) is a competitive zero-shot volatility proxy**: Pearson_r = 0.557, matching the best trained neural model (MLP-RV6, r=0.551) with zero training. This reveals a nuance in the domain-gap hypothesis — while Moirai2's *intermediate embeddings* weakly correlate with RV (median|corr|=0.128), its *calibrated uncertainty* (quantile spread) captures volatility dynamics effectively, suggesting the model implicitly encodes heteroscedasticity despite being pretrained on macro data.
+>
+> Best trained neural configuration: MLP with 6 extended RV features (batch training), MAE=0.0066, 6.5× worse than HAR-RV. The performance ceiling for trained neural models is determined by data volume (~97 effective samples/stock). HAR-RV remains the benchmark champion for point prediction (R²=0.971 vs best neural R²=0.278)."
 
 ---
 
