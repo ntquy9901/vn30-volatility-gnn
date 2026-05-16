@@ -1,0 +1,13 @@
+﻿Total pages: 1
+=== PAGE 1 ===
+Plan - Kết hợp GNN
+•Chronos Encoder: Extract temporal
+embeddings e_i từ volatility history
+•Dynamic Graph Construction: Build time-
+varying graph G_t với rolling window
+correlations
+•Temporal GNN (T-GNN): Use
+EvolveGCN/TGAT/DyGNN để model graph
+evolution + temporal dynamics
+•Prediction Head: MLP predicts volatility cho
+mỗi stock từ T-GNN outputs
