@@ -119,6 +119,66 @@ def get_rv_node_features(
     return torch.tensor(feat, dtype=torch.float)
 
 
+def get_extended_rv_features(
+    log_returns: pd.DataFrame,
+    window_end: pd.Timestamp,
+    all_nodes: list,
+    h: int = 20,
+) -> torch.Tensor:
+    """
+    Extended RV node features — 6 dimensions per node:
+      [0] log(RV_d)        — past-h RV (daily)
+      [1] log(RV_w)        — 5-day avg RV (weekly)
+      [2] log(RV_m)        — 22-day avg RV (monthly)
+      [3] log(RV_q)        — 60-day avg RV (quarterly)
+      [4] corr_vnindex     — rolling 60-day Pearson corr with VNINDEX returns
+      [5] jump_ratio       — max(RV_d - RV_w, 0) / RV_d, proportion from jumps
+
+    Returns:
+        Tensor shape (len(all_nodes), 6), float32.
+    """
+    rv_past = compute_past_rv(log_returns, h)
+    n       = len(all_nodes)
+    feat    = np.zeros((n, 6), dtype=np.float32)
+
+    # Pre-compute VNINDEX return series once
+    vi_col = log_returns["VNINDEX"] if "VNINDEX" in log_returns.columns else None
+
+    for idx, ticker in enumerate(all_nodes):
+        if ticker not in rv_past.columns:
+            continue
+        series = rv_past[ticker]
+        avail  = series[series.index <= window_end].dropna()
+        if len(avail) == 0:
+            continue
+
+        rv_d = float(avail.iloc[-1])
+        rv_w = float(avail.iloc[-5:].mean())  if len(avail) >= 5  else rv_d
+        rv_m = float(avail.iloc[-22:].mean()) if len(avail) >= 22 else rv_d
+        rv_q = float(avail.iloc[-60:].mean()) if len(avail) >= 60 else rv_m
+
+        # Jump ratio: fraction of daily RV unexplained by recent average
+        jump_ratio = max(rv_d - rv_w, 0.0) / max(rv_d, 1e-8)
+
+        # Correlation with VNINDEX (systematic risk exposure)
+        corr_vi = 0.0
+        if vi_col is not None and ticker in log_returns.columns:
+            df_pair = pd.concat([log_returns[ticker], vi_col], axis=1).dropna()
+            df_pair = df_pair[df_pair.index <= window_end].iloc[-60:]
+            if len(df_pair) >= 10:
+                c = float(df_pair.iloc[:, 0].corr(df_pair.iloc[:, 1]))
+                corr_vi = 0.0 if np.isnan(c) else c
+
+        feat[idx, 0] = np.log(max(rv_d, 1e-8))
+        feat[idx, 1] = np.log(max(rv_w, 1e-8))
+        feat[idx, 2] = np.log(max(rv_m, 1e-8))
+        feat[idx, 3] = np.log(max(rv_q, 1e-8))
+        feat[idx, 4] = corr_vi
+        feat[idx, 5] = jump_ratio
+
+    return torch.tensor(feat, dtype=torch.float)
+
+
 # ── Quick verification ───────────────────────────────────────────────────────
 if __name__ == "__main__":
     import os
