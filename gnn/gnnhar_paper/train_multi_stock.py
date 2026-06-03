@@ -216,16 +216,21 @@ def train_single_model(
 
         # Validation phase
         model.eval()
-        with torch.no_grad():
-            val_pred = forward_pass_with_mask(model, val_X, adj, val_stocks)
-            val_pred = torch.clamp(val_pred, min=1e-4, max=None)
-            val_loss = gnnhar_ratio_loss(val_pred, val_y).item()
+        
+        # Check if validation dataset is empty
+        if len(val_y) > 0:
+            with torch.no_grad():
+                val_pred = forward_pass_with_mask(model, val_X, adj, val_stocks)
+                val_pred = torch.clamp(val_pred, min=1e-4, max=None)
+                val_loss = gnnhar_ratio_loss(val_pred, val_y).item()
 
-            # Check for NaN/Inf validation loss
-            if np.isnan(val_loss) or np.isinf(val_loss):
-                print(f"  [WARN] NaN/Inf val loss at epoch {epoch+1}")
-
-        val_loss_history.append(val_loss)
+                # Check for NaN/Inf validation loss
+                if np.isnan(val_loss) or np.isinf(val_loss):
+                    print(f"  [WARN] NaN/Inf val loss at epoch {epoch+1}")
+            val_loss_history.append(val_loss)
+        else:
+            # No validation data - use train loss as placeholder
+            val_loss_history.append(train_loss_avg)
 
         # Print progress every 10 epochs
         if (epoch + 1) % 10 == 0 or epoch == 0:
@@ -289,6 +294,78 @@ def train_single_model(
     }
 
 
+
+def train_sklearn_model(
+    model,
+    train_dataset,
+    val_dataset,
+    test_dataset,
+    n_epochs: int,
+    device: str,
+) -> dict:
+    """
+    Train sklearn HAR-OLS model (mimics PyTorch interface).
+
+    sklearn uses closed-form OLS solution, so no training loop needed.
+    Returns immediately after fitting (1 dummy epoch).
+
+    Args:
+        model: HAR_OLS sklearn wrapper instance
+        train_dataset: TensorDataset with (X, y, stocks) tensors
+        val_dataset: TensorDataset with validation data (unused, kept for interface)
+        test_dataset: TensorDataset with test data
+        n_epochs: Ignored (sklearn has no epochs)
+        device: Ignored (sklearn runs on CPU)
+
+    Returns:
+        dict with metrics compatible with PyTorch models
+    """
+    from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+
+    print(f"    [sklearn] Fitting HAR-OLS model...")
+
+    # Extract numpy arrays from TensorDatasets (created in main() for sklearn path)
+    # train_dataset is TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train), torch.from_numpy(stocks_train))
+    X_train = train_dataset.tensors[0].numpy()
+    y_train = train_dataset.tensors[1].numpy()
+    stocks_train = train_dataset.tensors[2].numpy()
+
+    X_test = test_dataset.tensors[0].numpy()
+    y_test = test_dataset.tensors[1].numpy()
+    stocks_test = test_dataset.tensors[2].numpy()
+
+    # Fit model (closed-form OLS solution, instant)
+    model.fit(X_train, y_train, stocks_train)
+
+    # Predict on test set
+    y_pred = model.predict(X_test, stocks_test)
+
+    # Clip negative predictions (RV cannot be negative)
+    y_pred = np.maximum(y_pred, 0.0)
+
+    # Compute metrics
+    test_r2 = r2_score(y_test, y_pred)
+    test_mae = mean_absolute_error(y_test, y_pred)
+    test_rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+
+    # Dummy learning curve (single point since sklearn has no epochs)
+    train_loss_history = [0.0]  # Placeholder (sklearn has no loss)
+    val_loss_history = [0.0]    # Placeholder
+
+    print(f"    [sklearn] Training complete: Test R² = {test_r2:.4f}, MAE = {test_mae:.6f}")
+
+    return {
+        'best_val_loss': 0.0,  # sklearn has no validation loss
+        'val_r2': test_r2,
+        'n_epochs': 1,  # sklearn is instant (1 dummy epoch for compatibility)
+        'train_loss_history': train_loss_history,
+        'val_loss_history': val_loss_history,
+        'r2': test_r2,
+        'mae': test_mae,
+        'rmse': test_rmse,
+        'n_models': 1,
+    }
+
 def plot_learning_curves(
     train_loss_history: list,
     val_loss_history: list,
@@ -321,15 +398,15 @@ def plot_learning_curves(
 
         # Set y-axis range focusing on converged values
         y_min = max(0.0, min_loss - padding)
-        y_max = min_loss + padding + 0.1
+        y_max = max_loss + padding + 0.1  # FIXED: use max_loss instead of min_loss
     else:
         # Fallback if too few epochs
         y_min = 1.0
         y_max = 2.0
 
     plt.figure(figsize=(12, 7))  # Larger figure for better visibility
-    plt.plot(epochs, train_loss_history, 'b-', label='Train Loss', linewidth=3, marker='o', markersize=4)
-    plt.plot(epochs, val_loss_history, 'r-', label='Val Loss', linewidth=3, marker='s', markersize=4)
+    plt.plot(epochs, train_loss_history, 'b-', label='Train Loss', linewidth=4, marker='o', markersize=4, alpha=0.7)
+    plt.plot(epochs, val_loss_history, 'r-', label='Val Loss', linewidth=4, marker='s', markersize=4, alpha=0.7)
     plt.xlabel('Epoch', fontsize=14)
     plt.ylabel('QL Loss', fontsize=14)
     plt.title(f'{model_name} Learning Curve (Seed {seed})', fontsize=16)
@@ -425,7 +502,7 @@ def plot_ensemble_learning_curves(
 
         # Set y-axis range focusing on converged values
         y_min = max(0.0, min_loss - padding)
-        y_max = min_loss + padding + 0.1
+        y_max = max_loss + padding + 0.1  # FIXED: use max_loss instead of min_loss
     else:
         # Fallback if too few epochs
         y_min = 1.0
@@ -557,17 +634,6 @@ def train_ensemble(
     print(f"  [WARNING] Old results are INVALID - do not compare with new results")
     print(f"{'='*70}\n")
 
-    # Create data loader for training
-    # Note: num_workers=0 for Windows compatibility (multiprocessing issues on Windows)
-    # Vectorized forward pass provides speedup instead of parallel data loading
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=0,  # Windows: multiprocessing issues with PyTorch
-        pin_memory=False,  # False for CPU training
-    )
 
     # Create results directory for plots
     results_dir = PROJECT_ROOT / 'results' / 'gnnhar_paper' / 'multi_stock'
@@ -595,11 +661,34 @@ def train_ensemble(
         torch.manual_seed(seed)
         np.random.seed(seed)
 
+        # Create fresh DataLoader for THIS SEED (prevents iterator corruption)
+        # DataLoader reuse across seeds causes StopIteration errors in PyTorch
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=0,  # Windows: multiprocessing issues with PyTorch
+            pin_memory=False,  # False for CPU training
+        )
+
         # Create model with activation and dropout parameters
         model = create_model(model_name, n_hid=n_hid, activation=activation, dropout=dropout)
 
-        # Train
-        result = train_single_model(
+        # Train (sklearn or PyTorch)
+        if model_name == 'HAR_OLS':
+            # sklearn training path (uses datasets like PyTorch)
+            result = train_sklearn_model(
+                model=model,
+                train_dataset=train_dataset,  # Parameter is named train_dataset, not train_dataset_pt
+                val_dataset=val_dataset,
+                test_dataset=test_dataset,
+                n_epochs=n_epochs,
+                device=device,
+            )
+        else:
+            # PyTorch training path
+            result = train_single_model(
             model=model,
             train_loader=train_loader,
             val_dataset=val_dataset,
@@ -617,23 +706,25 @@ def train_ensemble(
         model_train_losses.append(result['train_loss_history'])
         model_epochs.append(result['n_epochs'])
 
-        # Save model checkpoint for inference
-        models_dir = PROJECT_ROOT / 'models' / 'gnnhar_paper_multi_stock' / f'h{horizon}' / model_name
-        models_dir.mkdir(parents=True, exist_ok=True)
-        model_path = models_dir / f'seed{seed}_{timestamp}.pt'
-        torch.save({
-            'model_state_dict': model.state_dict(),
-            'model_name': model_name,
-            'seed': seed,
-            'val_loss': result['best_val_loss'],
-            'n_hid': n_hid,
-            'activation': activation,
-            'dropout': dropout,
-            'version': 'v1.3_LOSS_FIX',
-        }, model_path)
+        # Save model checkpoint for inference (skip for sklearn - no state_dict)
+        if model_name != 'HAR_OLS':
+            models_dir = PROJECT_ROOT / 'models' / 'gnnhar_paper_multi_stock' / f'h{horizon}' / model_name
+            models_dir.mkdir(parents=True, exist_ok=True)
+            model_path = models_dir / f'seed{seed}_{timestamp}.pt'
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'model_name': model_name,
+                'seed': seed,
+                'val_loss': result['best_val_loss'],
+                'n_hid': n_hid,
+                'activation': activation,
+                'dropout': dropout,
+                'version': 'v1.3_LOSS_FIX',
+            }, model_path)
 
-        # Plot learning curve for this seed
-        plot_learning_curves(
+        # Plot learning curve for this seed (skip for sklearn)
+        if model_name != 'HAR_OLS':
+            plot_learning_curves(
             train_loss_history=result['train_loss_history'],
             val_loss_history=result['val_loss_history'],
             model_name=model_name,
@@ -642,31 +733,54 @@ def train_ensemble(
             timestamp=timestamp,
         )
 
-        # Test predictions
-        model.eval()
-        with torch.no_grad():
-            test_X = test_dataset.X.to(device)
-            test_stocks = test_dataset.stocks.to(device)
-            test_pred = forward_pass_with_mask(model, test_X, adj, test_stocks)
-            test_pred = torch.clamp(test_pred, min=1e-4, max=None)
-            model_predictions.append(test_pred.cpu().numpy())
+        # Test predictions (handle sklearn and PyTorch differently)
+        if model_name == 'HAR_OLS':
+            # sklearn: extract test data from TensorDataset and predict
+            X_test = test_dataset.tensors[0].numpy()
+            stocks_test = test_dataset.tensors[2].numpy()
+            test_pred = model.predict(X_test, stocks_test)
+            test_pred = np.maximum(test_pred, 0.0)  # Clip negative predictions
+            model_predictions.append(test_pred)
+        else:
+            # PyTorch: forward pass with masking
+            model.eval()
+            with torch.no_grad():
+                test_X = test_dataset.X.to(device)
+                test_stocks = test_dataset.stocks.to(device)
+                test_pred = forward_pass_with_mask(model, test_X, adj, test_stocks)
+                test_pred = torch.clamp(test_pred, min=1e-4, max=None)
+                model_predictions.append(test_pred.cpu().numpy())
 
         print(f"[Seed {seed}] Val loss: {result['best_val_loss']:.6f}, "
               f"Epochs: {result['n_epochs']}")
 
-    # Screen by validation loss (keep top 50%)
-    median_val_loss = np.median(model_val_losses)
-    screened_indices = [i for i, vl in enumerate(model_val_losses) if vl <= median_val_loss]
-    screened_preds = [model_predictions[i] for i in screened_indices]
+    # sklearn models are deterministic (no screening needed)
+    if model_name == 'HAR_OLS':
+        # All seeds produce identical results, use first seed's prediction
+        screened_indices = [0]
+        screened_preds = [model_predictions[0]]
+        print(f"\n[Ensemble] sklearn HAR-OLS is deterministic (all seeds identical)")
+        print(f"[Ensemble] Using seed {seeds[0]} prediction for ensemble")
+    else:
+        # Screen by validation loss (keep top 50%)
+        median_val_loss = np.median(model_val_losses)
+        screened_indices = [i for i, vl in enumerate(model_val_losses) if vl <= median_val_loss]
+        screened_preds = [model_predictions[i] for i in screened_indices]
 
-    print(f"\n[Ensemble] Screened {len(screened_preds)}/{n_seeds} models "
-          f"(val loss <= {median_val_loss:.6f})")
+        print(f"\n[Ensemble] Screened {len(screened_preds)}/{n_seeds} models "
+              f"(val loss <= {median_val_loss:.6f})")
 
     # Average predictions
     ensemble_pred = np.mean(screened_preds, axis=0)
 
-    # Compute metrics
-    test_y = test_dataset.y.numpy()
+    # Compute metrics (handle both sklearn and PyTorch datasets)
+    if model_name == 'HAR_OLS':
+        # sklearn: test_dataset is TensorDataset, extract y from tensor
+        test_y = test_dataset.tensors[1].numpy()
+    else:
+        # PyTorch: test_dataset is MultiStockDataset
+        test_y = test_dataset.y.numpy()
+
     ss_res = np.sum((test_y - ensemble_pred)**2)
     ss_tot = np.sum((test_y - test_y.mean())**2)
     r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
@@ -675,15 +789,16 @@ def train_ensemble(
 
     print(f"[Ensemble] Test R2: {r2:+.4f}, MAE: {mae:.6f}, RMSE: {rmse:.6f}")
 
-    # Plot ensemble learning curves
-    print("\n[Ensemble] Generating learning curves...")
-    plot_ensemble_learning_curves(
-        model_train_losses=model_train_losses,
-        model_val_loss_histories=model_val_loss_histories,
-        model_name=model_name,
-        save_path=results_dir,
-        timestamp=timestamp,
-    )
+    # Plot ensemble learning curves (skip for sklearn)
+    if model_name != 'HAR_OLS':
+        print("\n[Ensemble] Generating learning curves...")
+        plot_ensemble_learning_curves(
+            model_train_losses=model_train_losses,
+            model_val_loss_histories=model_val_loss_histories,
+            model_name=model_name,
+            save_path=results_dir,
+            timestamp=timestamp,
+        )
 
     return {
         'model_name': model_name,
@@ -702,7 +817,7 @@ def train_ensemble(
 def main():
     parser = argparse.ArgumentParser(description='Multi-stock GNNHAR training')
     parser.add_argument('--model', type=str, default='GHAR',
-                        choices=['HAR', 'GHAR', 'GNNHAR1L', 'GNNHAR2L', 'GNNHAR3L'],
+                        choices=['HAR', 'HAR_OLS', 'GHAR', 'GNNHAR1L', 'GNNHAR2L', 'GNNHAR3L', 'GATHAR1L'],
                         help='Model to train')
     parser.add_argument('--n_seeds', type=int, default=20,
                         help='Number of models in ensemble')
@@ -766,14 +881,30 @@ def main():
     loader.flatten_dataset()
     loader.split_train_val_test()
 
-    # Use prepare_pytorch_data to get train/val/test split
-    X_train, y_train, stocks_train, dates_train, \
-    X_val, y_val, stocks_val, dates_val, \
-    X_test, y_test, stocks_test, dates_test = loader.prepare_pytorch_data(val_split=0.2)
+    # Use sklearn data pipeline for HAR_OLS (100% training data, no validation split)
+    if args.model == 'HAR_OLS':
+        X_train, y_train, stocks_train, dates_train, \
+        X_test, y_test, stocks_test, dates_test = loader.prepare_sklearn_data()
+        
+        # Create dummy validation data (sklearn doesn't need it, but kept for interface compatibility)
+        X_val, y_val, stocks_val, dates_val = X_test, y_test, stocks_test, dates_test
+        
+        # No datasets needed for sklearn (doesn't use DataLoader)
+        train_dataset = None
+        val_dataset = None
+        
+        print(f"  [sklearn] Using 100% training data: {len(X_train)} samples")
+        print(f"  [sklearn] No validation split needed (closed-form OLS solution)")
+        print(f"  Test:  {len(X_test)} samples\n")
+    else:
+        # Use PyTorch data pipeline (80/20 train/val split for early stopping)
+        X_train, y_train, stocks_train, dates_train, \
+        X_val, y_val, stocks_val, dates_val, \
+        X_test, y_test, stocks_test, dates_test = loader.prepare_pytorch_data(val_split=0.2)
 
-    print(f"  Train: {len(X_train)} samples")
-    print(f"  Val:   {len(X_val)} samples")
-    print(f"  Test:  {len(X_test)} samples\n")
+        print(f"  Train: {len(X_train)} samples")
+        print(f"  Val:   {len(X_val)} samples")
+        print(f"  Test:  {len(X_test)} samples\n")
 
     # Step 2: Build adjacency matrix
     print("[Step 2] Building adjacency matrix...")
@@ -810,25 +941,54 @@ def main():
     # Generate timestamp for this run
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
-    result = train_ensemble(
-        model_name=args.model,
-        train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        test_dataset=test_dataset,
-        adj=adj_tensor,
-        n_seeds=args.n_seeds,
-        n_hid=args.n_hid,
-        n_epochs=args.epochs,
-        lr=args.lr,
-        weight_decay=args.weight_decay,
-        batch_size=args.batch_size,
-        device=args.device,
-        horizon=args.horizon,
-        activation=args.activation,
-        dropout=args.dropout,
-        grad_clip=args.grad_clip,
-        timestamp=timestamp,
-    )
+    # sklearn uses numpy arrays, PyTorch uses datasets
+    if args.model == 'HAR_OLS':
+        # Create dummy datasets for sklearn (train_ensemble expects datasets)
+        # But sklearn will use numpy arrays internally via train_sklearn_model
+        from torch.utils.data import TensorDataset
+        train_dataset_pt = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train), torch.from_numpy(stocks_train))
+        val_dataset_pt = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val), torch.from_numpy(stocks_val))
+        test_dataset_pt = TensorDataset(torch.from_numpy(X_test), torch.from_numpy(y_test), torch.from_numpy(stocks_test))
+        
+        result = train_ensemble(
+            model_name=args.model,
+            train_dataset=train_dataset_pt,
+            val_dataset=val_dataset_pt,
+            test_dataset=test_dataset_pt,
+            adj=adj_tensor,
+            n_seeds=args.n_seeds,
+            n_hid=args.n_hid,
+            n_epochs=args.epochs,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            batch_size=args.batch_size,
+            device=args.device,
+            horizon=args.horizon,
+            activation=args.activation,
+            dropout=args.dropout,
+            grad_clip=args.grad_clip,
+            timestamp=timestamp,
+        )
+    else:
+        result = train_ensemble(
+            model_name=args.model,
+            train_dataset=train_dataset,
+            val_dataset=val_dataset,
+            test_dataset=test_dataset,
+            adj=adj_tensor,
+            n_seeds=args.n_seeds,
+            n_hid=args.n_hid,
+            n_epochs=args.epochs,
+            lr=args.lr,
+            weight_decay=args.weight_decay,
+            batch_size=args.batch_size,
+            device=args.device,
+            horizon=args.horizon,
+            activation=args.activation,
+            dropout=args.dropout,
+            grad_clip=args.grad_clip,
+            timestamp=timestamp,
+        )
 
     # Step 5: Save results
     print("\n[Step 5] Saving results...")
@@ -838,16 +998,26 @@ def main():
     # Use the same timestamp from training (already generated above)
     result_file = results_dir / f'{args.model}_{args.activation}_h{args.horizon}_{timestamp}.json'
 
+    # sklearn-specific parameter handling
+    if args.model == 'HAR_OLS':
+        model_activation = 'N/A'  # sklearn has no activation
+        model_dropout = 0.0  # sklearn has no dropout
+        model_n_hid = 0  # sklearn has no hidden layer
+    else:
+        model_activation = args.activation
+        model_dropout = args.dropout
+        model_n_hid = args.n_hid
+    
     save_data = {
         'model': args.model,
-        'activation': args.activation,
+        'activation': model_activation,
         'version': 'v1.3_LOSS_FIX',  # Fixed ratio inversion, renamed to gnnhar_ratio_loss
-        'dropout': args.dropout,
+        'dropout': model_dropout,
         'horizon': args.horizon,
         'adj_method': args.adj_method,
         'adj_threshold': args.adj_threshold,
         'n_seeds': args.n_seeds,
-        'n_hid': args.n_hid,
+        'n_hid': model_n_hid,
         'test_r2': float(result['r2']),
         'test_mae': float(result['mae']),
         'test_rmse': float(result['rmse']),
