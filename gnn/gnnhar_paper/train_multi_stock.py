@@ -192,6 +192,10 @@ def train_single_model(
             # QL loss
             loss = gnnhar_ratio_loss(pred, batch_y)
 
+            # Check for NaN/Inf loss (numerical instability detection)
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"  [WARN] NaN/Inf loss at epoch {epoch+1}, seed {seed}")
+
             # Backward pass
             optimizer.zero_grad()
             loss.backward()
@@ -216,6 +220,10 @@ def train_single_model(
             val_pred = forward_pass_with_mask(model, val_X, adj, val_stocks)
             val_pred = torch.clamp(val_pred, min=1e-4, max=None)
             val_loss = gnnhar_ratio_loss(val_pred, val_y).item()
+
+            # Check for NaN/Inf validation loss
+            if np.isnan(val_loss) or np.isinf(val_loss):
+                print(f"  [WARN] NaN/Inf val loss at epoch {epoch+1}")
 
         val_loss_history.append(val_loss)
 
@@ -263,9 +271,14 @@ def train_single_model(
         val_y_numpy = val_y.cpu().numpy()
         val_pred_numpy = val_pred.cpu().numpy()
 
-        ss_res = np.sum((val_y_numpy - val_pred_numpy) ** 2)
-        ss_tot = np.sum((val_y_numpy - val_y_numpy.mean()) ** 2)
-        val_r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
+        # Check for empty validation dataset
+        if len(val_y_numpy) == 0:
+            print("  [WARN] Empty validation dataset, val_r2 set to 0")
+            val_r2 = 0.0
+        else:
+            ss_res = np.sum((val_y_numpy - val_pred_numpy) ** 2)
+            ss_tot = np.sum((val_y_numpy - val_y_numpy.mean()) ** 2)
+            val_r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
     return {
         'best_val_loss': best_val_loss,
@@ -307,7 +320,7 @@ def plot_learning_curves(
         padding = (max_loss - min_loss) * 0.1  # 10% padding
 
         # Set y-axis range focusing on converged values
-        y_min = max(1.0, min_loss - padding)
+        y_min = max(0.0, min_loss - padding)
         y_max = min_loss + padding + 0.1
     else:
         # Fallback if too few epochs
@@ -411,7 +424,7 @@ def plot_ensemble_learning_curves(
         padding = (max_loss - min_loss) * 0.1  # 10% padding
 
         # Set y-axis range focusing on converged values
-        y_min = max(1.0, min_loss - padding)
+        y_min = max(0.0, min_loss - padding)
         y_max = min_loss + padding + 0.1
     else:
         # Fallback if too few epochs
