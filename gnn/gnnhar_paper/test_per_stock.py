@@ -33,6 +33,9 @@ from gnn.gnnhar_paper.data_loader import MultiStockDataLoader
 from gnn.gnnhar_paper.graph_builder import GraphBuilder
 from gnn.gnnhar_paper.train_multi_stock import forward_pass_with_mask
 
+# Statistical tests
+from scipy import stats
+
 
 def load_latest_models(horizon: int = 5, model_name: str = 'GNNHAR1L', top_k: int = 3):
     """
@@ -150,11 +153,141 @@ def get_stock_characteristics(close: pd.DataFrame, stock: str, test_dates: pd.Da
     }
 
 
+def compute_naive_baseline(y_true: np.ndarray) -> np.ndarray:
+    """
+    Compute naive baseline forecast (constant = training mean).
+
+    For volatility forecasting, naive = mean of observed values.
+    This represents a "no-change" forecast.
+
+    Args:
+        y_true: Actual values (will use mean as forecast)
+
+    Returns:
+        Array of constant predictions (mean of y_true)
+    """
+    return np.full_like(y_true, y_true.mean())
+
+
+def compute_theil_u(y_true: np.ndarray, y_pred: np.ndarray, y_naive: np.ndarray) -> float:
+    """
+    Compute Theil's U statistic (relative forecast accuracy).
+
+    U = sqrt(sum((y_true - y_pred)^2)) / sqrt(sum((y_true - y_naive)^2))
+
+    Interpretation:
+    - U < 1: Model better than naive
+    - U = 1: Same as naive
+    - U > 1: Worse than naive
+
+    Args:
+        y_true: Actual values
+        y_pred: Model predictions
+        y_naive: Naive baseline predictions
+
+    Returns:
+        Theil's U statistic
+    """
+    rmse_model = np.sqrt(np.mean((y_true - y_pred) ** 2))
+    rmse_naive = np.sqrt(np.mean((y_true - y_naive) ** 2))
+
+    return rmse_model / rmse_naive if rmse_naive > 0 else float('inf')
+
+
+def compute_direction_accuracy(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """
+    Compute direction accuracy (% of correct increase/decrease predictions).
+
+    For volatility: did the model correctly predict if volatility would go UP or DOWN?
+
+    Args:
+        y_true: Actual values
+        y_pred: Model predictions
+
+    Returns:
+        Direction accuracy (0.0 to 1.0)
+    """
+    # Compute direction signs (+1 for increase, -1 for decrease)
+    true_dir = np.sign(np.diff(y_true, prepend=y_true[0]))
+    pred_dir = np.sign(np.diff(y_pred, prepend=y_pred[0]))
+
+    # Accuracy = percentage of matching directions
+    correct = np.sum(true_dir == pred_dir)
+    total = len(true_dir)
+
+    return correct / total if total > 0 else 0.0
+
+
+def compute_mase(y_true: np.ndarray, y_pred: np.ndarray, y_naive: np.ndarray) -> float:
+    """
+    Compute Mean Absolute Scaled Error (MASE).
+
+    MASE = MAE(model) / MAE(naive)
+
+    Interpretation:
+    - MASE < 1: Model better than naive
+    - MASE = 1: Same as naive
+    - MASE > 1: Worse than naive
+
+    Args:
+        y_true: Actual values
+        y_pred: Model predictions
+        y_naive: Naive baseline predictions
+
+    Returns:
+        MASE statistic
+    """
+    mae_model = np.mean(np.abs(y_true - y_pred))
+    mae_naive = np.mean(np.abs(y_true - y_naive))
+
+    return mae_model / mae_naive if mae_naive > 0 else float('inf')
+
+
+def diebold_mariano_test(y_true: np.ndarray, y_pred1: np.ndarray, y_pred2: np.ndarray,
+                         alpha: float = 0.05) -> tuple:
+    """
+    Perform Diebold-Mariano test for forecast accuracy comparison.
+
+    Tests H0: Both forecasts have equal accuracy
+    H1: Forecast 1 is more accurate than Forecast 2
+
+    Args:
+        y_true: Actual values
+        y_pred1: Model predictions
+        y_pred2: Naive predictions
+        alpha: Significance level (default 0.05)
+
+    Returns:
+        (statistic, p_value, significant) where significant = True if p < alpha
+    """
+    # Compute loss differentials (squared errors)
+    loss1 = (y_true - y_pred1) ** 2
+    loss2 = (y_true - y_pred2) ** 2
+    d = loss1 - loss2
+
+    # Compute test statistic
+    mean_d = np.mean(d)
+    var_d = np.var(d, ddof=1)
+
+    if var_d == 0 or len(d) < 2:
+        return 0.0, 1.0, False
+
+    statistic = mean_d / np.sqrt(var_d / len(d))
+
+    # Two-tailed test
+    p_value = 2 * (1 - stats.norm.cdf(abs(statistic)))
+    significant = p_value < alpha
+
+    return statistic, p_value, significant
+
+
 def main():
     """Main testing function."""
     print("\n" + "="*70)
     print("  Per-Stock GNNHAR Performance Testing")
     print("  Testing v1.3_LOSS_FIX models on all 30 VN30 stocks")
+    print("  Comprehensive Evaluation: R2, MAE, RMSE, MSE, Theil-U, MASE,")
+    print("                        Direction Accuracy, Naive Baseline, DM Test")
     print("="*70 + "\n")
 
     # Configuration
@@ -250,12 +383,35 @@ def main():
         # Average predictions
         y_pred = np.mean(predictions, axis=0).flatten()
 
-        # Compute metrics
+        # ========== Comprehensive Metrics ==========
+
+        # 1. Basic metrics
         ss_res = np.sum((y_stock - y_pred) ** 2)
         ss_tot = np.sum((y_stock - y_stock.mean()) ** 2)
         r2 = 1 - ss_res / ss_tot if ss_tot > 0 else 0.0
         mae = np.mean(np.abs(y_stock - y_pred))
-        rmse = np.sqrt(np.mean((y_stock - y_pred) ** 2))
+        mse = np.mean((y_stock - y_pred) ** 2)
+        rmse = np.sqrt(mse)
+
+        # 2. Naive baseline (constant forecast = mean)
+        y_naive = compute_naive_baseline(y_stock)
+        mae_naive = np.mean(np.abs(y_stock - y_naive))
+        mse_naive = np.mean((y_stock - y_naive) ** 2)
+        rmse_naive = np.sqrt(mse_naive)
+
+        # Naive R2 (using same formula as model)
+        ss_res_naive = np.sum((y_stock - y_naive) ** 2)
+        r2_naive = 1 - ss_res_naive / ss_tot if ss_tot > 0 else 0.0
+
+        # 3. Relative accuracy metrics
+        theil_u = compute_theil_u(y_stock, y_pred, y_naive)
+        mase = compute_mase(y_stock, y_pred, y_naive)
+
+        # 4. Direction accuracy
+        direction_acc = compute_direction_accuracy(y_stock, y_pred)
+
+        # 5. Statistical significance test (Diebold-Mariano)
+        dm_stat, dm_pval, dm_sig = diebold_mariano_test(y_stock, y_pred, y_naive)
 
         # Get stock characteristics
         chars = get_stock_characteristics(close, stock, pd.DatetimeIndex(dates_inf))
@@ -268,16 +424,33 @@ def main():
         else:
             group = 'poor'
 
-        print(f"    R2={r2:+.4f}, MAE={mae:.5f}, Group={group}")
+        print(f"    R2={r2:+.4f}, MAE={mae:.5f}, RMSE={rmse:.5f}")
+        print(f"    Theil-U={theil_u:.4f}, MASE={mase:.4f}, DirAcc={direction_acc:.2%}")
+        print(f"    DM test: stat={dm_stat:+.3f}, p={dm_pval:.3f}, sig={dm_sig}")
 
         results.append({
             'stock': stock,
             'sector': chars['sector'],
             'market_cap': chars['market_cap'],
             'mean_rv': chars['mean_rv'],
+            # Model metrics
             'r2': r2,
             'mae': mae,
+            'mse': mse,
             'rmse': rmse,
+            # Naive baseline
+            'r2_naive': r2_naive,
+            'mae_naive': mae_naive,
+            'rmse_naive': rmse_naive,
+            # Relative metrics
+            'theil_u': theil_u,
+            'mase': mase,
+            'direction_acc': direction_acc,
+            # Statistical test
+            'dm_statistic': dm_stat,
+            'dm_pvalue': dm_pval,
+            'dm_significant': dm_sig,
+            # Metadata
             'n_samples': len(X_stock),
             'group': group,
         })
@@ -340,33 +513,47 @@ def main():
 
     # Step 8: Summary statistics
     print("\n" + "="*70)
-    print("  SUMMARY")
+    print("  SUMMARY STATISTICS")
     print("="*70)
 
     group_counts = df['group'].value_counts()
     print(f"\n  Performance Groups:")
-    print(f"    Good (R2 > 0.5):    {group_counts.get('good', 0)} stocks")
-    print(f"    Moderate (0 < R2 <= 0.5): {group_counts.get('moderate', 0)} stocks")
-    print(f"    Poor (R2 <= 0):    {group_counts.get('poor', 0)} stocks")
+    print(f"    Good (R2 > 0.5):        {group_counts.get('good', 0):2d} stocks ({group_counts.get('good', 0)/len(df)*100:.1f}%)")
+    print(f"    Moderate (0 < R2 <= 0.5): {group_counts.get('moderate', 0):2d} stocks ({group_counts.get('moderate', 0)/len(df)*100:.1f}%)")
+    print(f"    Poor (R2 <= 0):         {group_counts.get('poor', 0):2d} stocks ({group_counts.get('poor', 0)/len(df)*100:.1f}%)")
 
-    print(f"\n  Aggregate Statistics:")
-    print(f"    Mean R2:   {df['r2'].mean():+.4f}")
-    print(f"    Median R2: {df['r2'].median():+.4f}")
-    print(f"    Std R2:    {df['r2'].std():+.4f}")
-    print(f"    Best stock: {df.loc[df['r2'].idxmax(), 'stock']} (R2={df['r2'].max():+.4f})")
+    print(f"\n  Model vs Naive Baseline (Aggregate):")
+    print(f"    Model:    R2={df['r2'].mean():+.4f}, MAE={df['mae'].mean():.5f}, RMSE={df['rmse'].mean():.5f}")
+    print(f"    Naive:    R2={df['r2_naive'].mean():+.4f}, MAE={df['mae_naive'].mean():.5f}, RMSE={df['rmse_naive'].mean():.5f}")
+
+    print(f"\n  Relative Accuracy Metrics:")
+    print(f"    Theil-U:  {df['theil_u'].mean():.4f} (mean) | <1.0 = better than naive")
+    print(f"    MASE:     {df['mase'].mean():.4f} (mean) | <1.0 = better than naive")
+    print(f"    Dir Acc:  {df['direction_acc'].mean():.2%} (mean) | % correct direction predictions")
+
+    dm_sig_count = df['dm_significant'].sum()
+    print(f"\n  Diebold-Mariano Statistical Test:")
+    print(f"    Model significantly better than naive: {dm_sig_count}/{len(df)} stocks ({dm_sig_count/len(df)*100:.1f}%)")
+    print(f"    Mean p-value: {df['dm_pvalue'].mean():.4f}")
+
+    print(f"\n  Stock Distribution:")
+    print(f"    Mean R2:     {df['r2'].mean():+.4f}")
+    print(f"    Median R2:   {df['r2'].median():+.4f}")
+    print(f"    Std R2:      {df['r2'].std():+.4f}")
+    print(f"    Best stock:  {df.loc[df['r2'].idxmax(), 'stock']} (R2={df['r2'].max():+.4f})")
     print(f"    Worst stock: {df.loc[df['r2'].idxmin(), 'stock']} (R2={df['r2'].min():+.4f})")
 
-    print(f"\n  By Sector:")
-    sector_stats = df.groupby('sector')['r2'].agg(['mean', 'count'])
+    print(f"\n  By Sector (Model R2):")
+    sector_stats = df.groupby('sector')['r2'].agg(['mean', 'std', 'count'])
     sector_stats = sector_stats.sort_values('mean', ascending=False)
     for sector, row in sector_stats.iterrows():
-        print(f"    {sector:12s} Mean R2={row['mean']:+.4f} (n={int(row['count'])})")
+        print(f"    {sector:12s} R2={row['mean']:+.4f} (+/- {row['std']:.4f}) n={int(row['count'])}")
 
-    print(f"\n  By Market Cap:")
-    cap_stats = df.groupby('market_cap')['r2'].agg(['mean', 'count'])
+    print(f"\n  By Market Cap (Model R2):")
+    cap_stats = df.groupby('market_cap')['r2'].agg(['mean', 'std', 'count'])
     cap_stats = cap_stats.sort_values('mean', ascending=False)
     for cap, row in cap_stats.iterrows():
-        print(f"    {cap:8s} Mean R2={row['mean']:+.4f} (n={int(row['count'])})")
+        print(f"    {cap:8s} R2={row['mean']:+.4f} (+/- {row['std']:.4f}) n={int(row['count'])}")
 
     print("\n" + "="*70)
     print(f"  Results saved to: {csv_path.name}")

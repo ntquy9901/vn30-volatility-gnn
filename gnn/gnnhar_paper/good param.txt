@@ -1,0 +1,48 @@
+python gnn/gnnhar_paper/train_multi_stock.py --model GNNHAR1L --activation gelu --n_seeds 2 --epochs 400 --lr 0.0024 --weight_decay 1.4e-06 --n_hid 32 --adj_threshold 0.367 --dropout 0.13 --grad_clip 1.0 --horizon 5
+
+
+python gnn/gnnhar_paper/optuna_gnnhar_optimization.py --model GNNHAR1L --n_trials 100 --epochs 200 --horizon 5
+
+
+python gnn/gnnhar_paper/train_multi_stock.py --model GNNHAR1L --activation relu --n_seeds 2 --epochs 125 --lr 0.000315 --weight_decay 4.14e-05 --n_hid 16 --batch_size 256 --adj_method glasso --dropout 0.135 --grad_clip 1.0 --horizon 5
+
+
+
+--------------------------------
+
+  Best Configuration (Trial 77):
+  # Optimized from 100 trials
+  model: GNNHAR1L/GATHAR1L
+  activation: relu
+  n_seeds: 2
+  epochs: 108
+  lr: 0.000129
+  weight_decay: 6.07e-05
+  n_hid: 32
+  batch_size: 256
+  adj_method: glasso
+  dropout: 0.176
+  grad_clip: 1.0
+  horizon: 5
+
+  # Expected performance:
+  val_r2: ~0.800
+  test_r2: ~0.755-0.785
+
+
+
+
+======================================================================
+  RECOMMENDATION
+======================================================================
+
+Best hyperparameters found:
+  Val R²: 0.8002
+
+To train final model with these hyperparameters, run:
+
+python gnn/gnnhar_paper/train_multi_stock.py --model GNNHAR1L --lr 0.0001 --weight_decay 0.0001 --n_hid 32 --batch_size 256 --activation gelu --adj_method glasso --dropout 0.176 --n_seeds 20 --epochs 400
+
+
+
+python gnn/gnnhar_paper/train_multi_stock.py --model GNNHAR1L --lr 0.0001 --weight_decay 0.0001 --n_hid 32 --batch_size 256 --activation gelu --adj_method glasso --dropout 0.176 --n_seeds 1 --epochs 50

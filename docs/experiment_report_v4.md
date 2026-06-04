@@ -139,7 +139,7 @@ Root cause: HAR-OLS fits per stock on the full time series (~2,500 samples per s
 |---|---|---|
 | log(RV_d) | log(std(r_{t-h+1}..r_t)) | Corsi (2009) HAR-RV |
 | log(RV_w) | log(mean of past 5 RV_d) | Corsi (2009) |
-| log(RV_m) | log(mean of past 22 RV_d) | Corsi (2009) |
+| log(RV_m) | log(mean of past 20 RV_d) | Corsi (2009) |
 | log(RV_q) | log(mean of past 60 RV_d) | Extended HAR |
 | corr_vnindex | Pearson(stock, VNINDEX, 60-day) | Systematic risk |
 | jump_ratio | max(RV_d − RV_w, 0) / RV_d | Barndorff-Nielsen & Shephard (2004) |

@@ -1,0 +1,12 @@
+        if name == 'HAR':
+            desc = 'Linear baseline (no graph)'
+        elif name == 'GHAR':
+            desc = 'HAR + 1 GCN (linear spillover)'
+        elif name == 'GNNHAR1L':
+            desc = 'HAR + 1 GCN + MLP (1-hop)'
+        elif name == 'GNNHAR2L':
+            desc = 'HAR + 2 GCN + MLP (2-hop)'
+        elif name == 'GATHAR1L':
+            desc = 'HAR + 1 GAT + MLP (1-hop, attention)'
+        else:  # GNNHAR3L
+            desc = 'HAR + 3 GCN + MLP (3-hop)'

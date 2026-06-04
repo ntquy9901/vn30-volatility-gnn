@@ -11,6 +11,9 @@ Edges:
 
 Edge attributes: [pearson_corr, same_sector_flag]  shape (E, 2)
 
+Ghi chu: file nay xay dung 31-node graph (co VNINDEX) dung cho MIMO version.
+SISO version dung build_static_graph_30() trong har_graph.py (30 nodes, khong VNINDEX).
+
 Usage:
     python gnn/build_graph.py
 """
@@ -29,7 +32,11 @@ class GraphData:
     loss_mask: torch.Tensor    # (N,) bool
 
 
-# ── VN30 sector map (hardcoded domain knowledge) ────────────────────────────
+# ── VN30 sector map (domain knowledge hardcoded) ────────────────────────────
+# Ly do can sector map: Pearson correlation chi bat duoc co-movement THUC TE trong data.
+# Nhung stocks cung nganh (vi du: BID, CTG, VCB deu la ngan hang nha nuoc) chia se cac
+# yeu to rui ro nganh (interest rate policy, NPL regulations) ngay ca khi Pearson hoi thap
+# do volume thap hoac giai doan data it. Sector edges them prior domain knowledge vao graph.
 SECTOR_MAP: dict[str, str] = {
     "VCB": "bank",  "BID": "bank",  "CTG": "bank",  "MBB": "bank",
     "TCB": "bank",  "HDB": "bank",  "VPB": "bank",  "STB": "bank",
@@ -62,11 +69,15 @@ NODE_IDX:  dict[str, int] = {t: i for i, t in enumerate(ALL_NODES)}
 
 def _pearson(log_ret: pd.DataFrame, end_date: pd.Timestamp, window: int) -> pd.DataFrame:
     """
-    Pearson correlation matrix using the `window` trading days ending at end_date.
-    Only past data is used (no look-ahead).
+    Tinh Pearson correlation matrix dua tren `window` ngay giao dich cuoi cung truoc end_date.
+    Chi dung du lieu qua khu (khong lookahead).
+
+    Pearson(X, Y) = cov(X,Y) / (std(X) * std(Y))
+    Do luong muc do co-movement tuyen tinh, nam trong [-1, 1].
+    Tren log_returns: Pearson bat duoc "co bien dong cung nhau hay nguoc nhau".
     """
     mask = log_ret.index <= end_date
-    hist = log_ret.loc[mask].iloc[-window:]
+    hist = log_ret.loc[mask].iloc[-window:]   # lay `window` ngay cuoi trong training
     corr = hist.corr()
     return corr
 
@@ -113,30 +124,38 @@ def build_graph(
 
     src_list, dst_list, attr_list = [], [], []
 
-    # Stock-stock edges
+    # Stock-stock edges: Pearson > threshold HOAC cung sector
+    # corr_threshold=0.4: tuong quan trung binh (giai thich duoc 16% phuong sai).
+    # Thap hon 0.4 = co-movement qua yeu de truyen thong tin co y nghia.
     for i, ti in enumerate(stock_cols):
         for j, tj in enumerate(stock_cols):
             if i >= j:
-                continue
+                continue   # xu ly moi cap (i,j) 1 lan
             c = float(corr_mat.loc[ti, tj]) if (ti in corr_mat and tj in corr_mat.columns) else 0.0
             same_sect = int(SECTOR_MAP.get(ti) == SECTOR_MAP.get(tj)
                             and SECTOR_MAP.get(ti) is not None)
             if c > corr_threshold or same_sect:
                 ni, nj = NODE_IDX[ti], NODE_IDX[tj]
-                # Undirected: add both directions
+                # Undirected: them CA HAI CHIEU.
+                # GraphSAGE aggregate tren INCOMING edges cua moi node.
+                # node j muon nhan thong tin tu i -> can edge i->j.
+                # node i muon nhan thong tin tu j -> can edge j->i.
                 src_list += [ni, nj]
                 dst_list += [nj, ni]
                 attr_list += [[c, same_sect], [c, same_sect]]
 
-    # VNINDEX hub edges: node_0 -> node_i (directed)
+    # VNINDEX hub edges: node_0 -> node_i (directed, chi 1 chieu tu VNINDEX vao stock)
+    # VNINDEX truyen thi truong tong the cho tung stock, nhung stock khong feed back vao VNINDEX
     for ticker in stock_cols:
         c = vnindex_corr.get(ticker, 0.0)
         ni = NODE_IDX[ticker]
         src_list.append(NODE_IDX["VNINDEX"])
         dst_list.append(ni)
-        attr_list.append([c, 0])  # same_sector=0 (VNINDEX has no sector)
+        attr_list.append([c, 0])   # same_sector=0: VNINDEX khong thuoc nganh nao
 
-    # Self-loops for any isolated nodes (degree-0 guard, FR17)
+    # Self-loops cho nodes bi co lap (degree=0): FR17 guard.
+    # GraphSAGE concat(h_self, agg_neighbors): neu khong co neighbors nao (ke ca self),
+    # h_self se khong duoc cap nhat -> bieu dien bi chet. Self-loop la nguong du phong.
     node_has_edge = set(src_list) | set(dst_list)
     isolated = []
     for n in range(31):
@@ -155,7 +174,9 @@ def build_graph(
     dgl_g = dgl.graph((src_list, dst_list), num_nodes=31)
     dgl_g.edata['attr'] = torch.tensor(attr_list, dtype=torch.float)
 
-    # loss_mask: False for VNINDEX (node_0), True for all VN30 stocks
+    # loss_mask: False cho VNINDEX (node_0), True cho 30 VN30 stocks.
+    # VNINDEX la hub node ho tro truyen thong tin; ta khong du doan vol cua no.
+    # Chi tinh loss tren 30 VN30 stocks co y nghia tai chinh.
     loss_mask = torch.ones(31, dtype=torch.bool)
     loss_mask[0] = False
 

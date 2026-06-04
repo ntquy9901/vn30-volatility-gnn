@@ -1,0 +1,89 @@
+
+
+class GATHAR1L(nn.Module):
+    """
+    1-layer Graph Attention HAR: HAR + 1 GAT + MLP.
+
+    H1 = Linear(3, 1)(node_feat)              -- local HAR
+    H2 = GAT(3, n_hid, heads)(node_feat, edge_index) -- 1-hop attention
+    H2 = activation(H2)                        -- nonlinearity
+    H2 = MLP(n_hid, 1)(H2)                        -- projection
+    output = H1 + H2                           -- residual connection
+
+    Unlike GCN which averages all neighbors equally, GAT learns
+    attention weights per neighbor connection, allowing the model
+    to focus on the most predictive relationships.
+
+    v1.1_GELU: Added activation function parameter (ReLU or GELU)
+    v1.2_DROPOUT: Added dropout support for regularization
+
+    NO final activation: allows negative predictions, preventing QL loss
+    collapse when predictions go to 0. Internal activation for nonlinearity kept.
+    """
+
+    def __init__(self, n_hid: int = 16, heads: int = 1, activation: Literal['relu', 'gelu'] = 'gelu', dropout: float = 0.0):
+        super().__init__()
+        # Local HAR branch
+        self.linear1 = nn.Linear(3, 1, bias=True)
+
+        # Graph Attention branch: 1 GAT layer -> MLP
+        # Note: GATConv handles attention mechanism internally
+        self.gat1 = GATConv(3, n_hid, heads=heads, dropout=dropout, edge_dim=1, concat=False)
+
+        # MLP projection: n_hid -> 1
+        self.mlp1 = nn.Linear(n_hid, 1, bias=False)
+
+        # Activation function (ReLU or GELU)
+        self.act_name = activation
+        if activation == 'gelu':
+            pass  # No module needed, use F.gelu in forward
+        else:  # relu (default)
+            self.relu = nn.ReLU()
+
+        # v1.2_DROPOUT: Dropout layer for regularization
+        # Placement: after GAT activation
+        self.dropout_rate = dropout
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, node_feat: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            node_feat: (batch_size, N, 3) HAR features
+            adj: (N, N) adjacency matrix (converted to edge_index internally)
+
+        Returns:
+            (batch_size, N) predicted RV per stock (can be negative, no final activation)
+        """
+        # Local HAR: (batch_size, N, 1)
+        H1 = self.linear1(node_feat)
+
+        # Convert adjacency matrix to edge index for GAT
+        # edge_index: (2, num_edges) where edge_index[0] = source nodes, edge_index[1] = target nodes
+        edge_index = adj.nonzero().t().contiguous()
+
+        # Graph branch:
+        # Step 1: Aggregate from 1-hop neighbors with attention: (batch_size, N, 3) -> (batch_size, N, n_hid)
+        if self.act_name == 'gelu':
+            H2 = F.gelu(self.gat1(node_feat, edge_index))
+        else:  # relu (default)
+            H2 = self.relu(self.gat1(node_feat, edge_index))
+
+        # v1.2_DROPOUT: Apply dropout after GAT activation
+        H2 = self.dropout(H2)
+
+        # Step 2: Project to scalar: (batch_size, N, n_hid) -> (batch_size, N, 1)
+        H2 = self.mlp1(H2)
+
+        # Apply activation after MLP for nonlinearity (kept, but no final activation)
+        if self.act_name == 'gelu':
+            H2 = F.gelu(H2)
+        else:  # relu (default)
+            H2 = self.relu(H2)
+
+        # Residual sum: (batch_size, N, 1) + (batch_size, N, 1) -> (batch_size, N, 1)
+        res = H1 + H2
+        # No final activation: return raw linear output
+        return res.squeeze(-1)
+
+    def count_params(self) -> int:
+        return sum(p.numel() for p in self.parameters() for p in self.parameters() if p.requires_grad)

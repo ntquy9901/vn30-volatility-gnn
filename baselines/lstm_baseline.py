@@ -29,7 +29,7 @@ from gnn.build_graph import VN30_TICKERS
 
 
 class LSTMModel(nn.Module):
-    def __init__(self, seq_len: int = 22, hidden: int = 32, dropout: float = 0.1):
+    def __init__(self, seq_len: int = 20, hidden: int = 32, dropout: float = 0.1):
         super().__init__()
         self.lstm = nn.LSTM(input_size=1, hidden_size=hidden, batch_first=True)
         self.drop = nn.Dropout(dropout)
@@ -54,7 +54,7 @@ def make_sequences(rv: np.ndarray, seq_len: int) -> tuple[np.ndarray, np.ndarray
 def fit_lstm(
     rv: pd.Series,
     train_end: pd.Timestamp,
-    seq_len: int = 22,
+    seq_len: int = 20,
     hidden: int = 32,
     epochs: int = 50,
     lr: float = 1e-3,
@@ -104,7 +104,7 @@ def predict_lstm(
     model: LSTMModel,
     rv: pd.Series,
     test_start: pd.Timestamp,
-    seq_len: int = 22,
+    seq_len: int = 20,
 ) -> pd.Series:
     """
     Out-of-sample predictions: for each test date, use the previous seq_len RV values.
@@ -135,7 +135,7 @@ def run_lstm_baseline(
     train_end: str = "2025-12-31",
     test_start: str = "2026-01-01",
     horizon: int = 20,
-    seq_len: int = 22,
+    seq_len: int = 20,
     hidden: int = 32,
     epochs: int = 50,
     tickers: list[str] | None = None,

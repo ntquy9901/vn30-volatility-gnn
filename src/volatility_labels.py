@@ -67,6 +67,9 @@ def compute_rv(close: pd.DataFrame, h: int = 20) -> pd.DataFrame:
         RV DataFrame, same shape as close.
     """
     log_ret = compute_log_returns(close)
+    if h == 1:
+        # std(1 value, ddof=1) is undefined; |r_{t+1}| is the standard h=1 proxy
+        return log_ret.abs().shift(-1)
     rv = log_ret.rolling(h, min_periods=h).std(ddof=1).shift(-h)
     return rv
 
@@ -90,7 +93,7 @@ def get_rv_node_features(
 
     RV_d = past-h RV at window_end          (daily)
     RV_w = mean of past 5  RV values        (weekly)
-    RV_m = mean of past 22 RV values        (monthly)
+    RV_m = mean of past 20 RV values        (monthly)
 
     Log-transformed so scale matches log-RV training target.
 
@@ -110,7 +113,7 @@ def get_rv_node_features(
             continue
         rv_d = float(avail.iloc[-1])
         rv_w = float(avail.iloc[-5:].mean())  if len(avail) >= 5  else rv_d
-        rv_m = float(avail.iloc[-22:].mean()) if len(avail) >= 22 else rv_d
+        rv_m = float(avail.iloc[-20:].mean()) if len(avail) >= 20 else rv_d
 
         feat[idx, 0] = np.log(max(rv_d, 1e-8))
         feat[idx, 1] = np.log(max(rv_w, 1e-8))
@@ -129,7 +132,7 @@ def get_extended_rv_features(
     Extended RV node features — 6 dimensions per node:
       [0] log(RV_d)        — past-h RV (daily)
       [1] log(RV_w)        — 5-day avg RV (weekly)
-      [2] log(RV_m)        — 22-day avg RV (monthly)
+      [2] log(RV_m)        — 20-day avg RV (monthly)
       [3] log(RV_q)        — 60-day avg RV (quarterly)
       [4] corr_vnindex     — rolling 60-day Pearson corr with VNINDEX returns
       [5] jump_ratio       — max(RV_d - RV_w, 0) / RV_d, proportion from jumps
@@ -154,7 +157,7 @@ def get_extended_rv_features(
 
         rv_d = float(avail.iloc[-1])
         rv_w = float(avail.iloc[-5:].mean())  if len(avail) >= 5  else rv_d
-        rv_m = float(avail.iloc[-22:].mean()) if len(avail) >= 22 else rv_d
+        rv_m = float(avail.iloc[-20:].mean()) if len(avail) >= 20 else rv_d
         rv_q = float(avail.iloc[-60:].mean()) if len(avail) >= 60 else rv_m
 
         # Jump ratio: fraction of daily RV unexplained by recent average

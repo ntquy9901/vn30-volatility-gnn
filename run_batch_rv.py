@@ -14,7 +14,7 @@ Model variants (all trained with batch regime):
 Extended RV features (6-dim per node):
   log(RV_d)     — daily past-h RV
   log(RV_w)     — 5-day avg RV  (weekly)
-  log(RV_m)     — 22-day avg RV (monthly)
+  log(RV_m)     — 20-day avg RV (monthly)
   log(RV_q)     — 60-day avg RV (quarterly)
   corr_vnindex  — rolling 60-day corr with VNINDEX (systematic risk)
   jump_ratio    — max(RV_d - RV_w, 0) / RV_d  (jump component fraction)

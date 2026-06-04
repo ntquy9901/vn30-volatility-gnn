@@ -1,0 +1,17 @@
+  python gnn/gnnhar_paper/train_multi_stock.py --model GNNHAR1L --activation gelu --n_seeds 3 --epochs 400 --lr 0.0024 --weight_decay 1.4e-06 --n_hid 32 --adj_threshold 0.367 --dropout 0.13
+
+
+   python train_multi_stock.py --model GNNHAR1L --activation gelu --n_seeds 20 --epochs 400 --lr BEST_LR --weight_decay BEST_WD --n_hid BEST_HID --adj_threshold BEST_THRESH
+
+
+
+python gnn/gnnhar_paper/train_multi_stock.py \
+    --model GNNHAR1L \
+    --activation gelu \
+    --lr 0.0024 \
+    --weight_decay 0.0000 \
+    --n_hid 32 \
+    --adj_threshold 0.367 \
+    --dropout 0.130 \
+    --n_seeds 20 \
+    --epochs 400

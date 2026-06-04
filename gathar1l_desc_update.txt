@@ -1,0 +1,4 @@
+        elif name == 'GATHAR1L':
+            desc = 'HAR + 1 GAT + MLP (1-hop, attention)'
+        else:  # GNNHAR3L
+            desc = 'HAR + 3 GCN + MLP (3-hop)'

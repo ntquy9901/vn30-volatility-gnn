@@ -1,0 +1,12 @@
+    model_class = MODEL_REGISTRY[model_name]
+    # HAR has no dropout or activation (baseline)
+    if model_name == 'HAR':
+        return model_class()
+    # GHAR has dropout but no activation
+    if model_name == 'GHAR':
+        return model_class(n_hid=n_hid, dropout=dropout)
+    # GATHAR1L needs heads parameter for attention mechanism
+    if model_name == 'GATHAR1L':
+        return model_class(n_hid=n_hid, heads=1, activation=activation, dropout=dropout)
+    # GNNHAR models support both activation and dropout
+    return model_class(n_hid=n_hid, activation=activation, dropout=dropout)

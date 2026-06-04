@@ -418,7 +418,7 @@ Python 3.10.11, CPU only (no GPU)
 **Extended RV6 features (6-dim, in src/volatility_labels.py):**
 - log(RV_d): past-h daily realized volatility
 - log(RV_w): 5-day avg RV (weekly)
-- log(RV_m): 22-day avg RV (monthly)
+- log(RV_m): 20-day avg RV (monthly)
 - log(RV_q): 60-day avg RV (quarterly) — extended HAR
 - corr_vnindex: rolling 60-day Pearson corr with VNINDEX returns
 - jump_ratio: max(RV_d - RV_w, 0) / RV_d — Barndorff-Nielsen & Shephard (2004)
